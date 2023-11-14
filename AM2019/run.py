@@ -17,6 +17,12 @@ from nets.pointer_network import PointerNetwork, CriticNetworkLSTM
 from utils import torch_load_cpu, load_problem
 
 
+import wandb
+API_KEY = os.environ.get("WANDB_API_KEY")
+# you should set WANDB_API_KEY in your environment before running this script
+# using the command: export WANDB_API_KEY=<your_api_key_here>
+
+
 def run(opts):
 
     # Pretty print the run args
@@ -34,6 +40,19 @@ def run(opts):
     # Save arguments so exact configuration can always be found
     with open(os.path.join(opts.save_dir, "args.json"), 'w') as f:
         json.dump(vars(opts), f, indent=True)
+
+
+    # init wandb to track this run
+    if not opts.no_wandb:
+        wandb.login(key=API_KEY)
+        wandb_logger = wandb.init(
+            entity=opts.wandb_entity,   # a username, or a team name
+            project=f"nE_{opts.problem}_{opts.graph_size}",     # nE = non-Euclidean
+            name=opts.run_name, 
+            config=vars(opts))
+    else:
+        wandb_logger = None
+
 
     # Set the device
     opts.device = torch.device("cuda:0" if opts.use_cuda else "cpu")
@@ -164,9 +183,12 @@ def run(opts):
                 val_dataset,
                 problem,
                 tb_logger,
+                wandb_logger,
                 opts
             )
 
+    if not opts.no_wandb:
+        wandb.finish()
 
 if __name__ == "__main__":
     run(get_options())

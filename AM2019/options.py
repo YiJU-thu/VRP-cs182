@@ -40,8 +40,8 @@ def get_options(args=None):
     parser.add_argument('--no_cuda', action='store_true', help='Disable CUDA')
     parser.add_argument('--exp_beta', type=float, default=0.8,
                         help='Exponential moving average baseline decay (default 0.8)')
-    parser.add_argument('--baseline', default=None,
-                        help="Baseline to use: 'rollout', 'critic' or 'exponential'. Defaults to no baseline.")
+    parser.add_argument('--baseline', default='rollout',    # Yi: change the default baseline to 'rollout'
+                        help="Baseline to use: 'rollout', 'critic' or 'exponential', None (no basleine). Defaults to rollout.")
     parser.add_argument('--bl_alpha', type=float, default=0.05,
                         help='Significance in the t-test for updating rollout baseline')
     parser.add_argument('--bl_warmup_epochs', type=int, default=None,
@@ -69,9 +69,24 @@ def get_options(args=None):
     parser.add_argument('--load_path', help='Path to load model parameters and optimizer state from')
     parser.add_argument('--resume', help='Resume from previous checkpoint file')
     parser.add_argument('--no_tensorboard', action='store_true', help='Disable logging TensorBoard files')
+    parser.add_argument('--no_wandb', action='store_true', help='Disable logging to wandb')
+    parser.add_argument('--wandb_entity', default='ecal_ml4opt', help='Wandb entity (team space to submit logs)')
+    parser.add_argument('--who', default=None, help='have a signiture for the person submit the run. e.g., YJ')
     parser.add_argument('--no_progress_bar', action='store_true', help='Disable progress bar')
 
+
+    # TODO: add some options for setting non-Euclidean cases & training
+    parser.add_argument('--non_euclidean', action='store_true', help='Use a detailed distance matrix for cost evaluation')
+    # TODO TODO TODO TODO
+    # TODO
+    # TODO
+
+
     opts = parser.parse_args(args)
+
+    if opts.who is not None:
+        opts.run_name = opts.run_name + '_' + opts.who
+
 
     opts.use_cuda = torch.cuda.is_available() and not opts.no_cuda
     opts.run_name = "{}_{}".format(opts.run_name, time.strftime("%Y%m%dT%H%M%S"))

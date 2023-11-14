@@ -64,7 +64,7 @@ def clip_grad_norms(param_groups, max_norm=math.inf):
     return grad_norms, grad_norms_clipped
 
 
-def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, problem, tb_logger, opts):
+def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, problem, tb_logger, wandb_logger, opts):
     print("Start train epoch {}, lr={} for run {}".format(epoch, optimizer.param_groups[0]['lr'], opts.run_name))
     step = epoch * (opts.epoch_size // opts.batch_size)
     start_time = time.time()
@@ -92,6 +92,7 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
             step,
             batch,
             tb_logger,
+            wandb_logger,
             opts
         )
 
@@ -117,6 +118,8 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
 
     if not opts.no_tensorboard:
         tb_logger.log_value('val_avg_reward', avg_reward, step)
+    if not opts.no_wandb:
+        wandb_logger.log({'val_avg_reward': avg_reward, 'epoch': epoch})
 
     baseline.epoch_callback(model, epoch)
 
@@ -133,6 +136,7 @@ def train_batch(
         step,
         batch,
         tb_logger,
+        wandb_logger,
         opts
 ):
     x, bl_val = baseline.unwrap_batch(batch)
@@ -159,4 +163,4 @@ def train_batch(
     # Logging
     if step % int(opts.log_step) == 0:
         log_values(cost, grad_norms, epoch, batch_id, step,
-                   log_likelihood, reinforce_loss, bl_loss, tb_logger, opts)
+                   log_likelihood, reinforce_loss, bl_loss, tb_logger, wandb_logger, opts)

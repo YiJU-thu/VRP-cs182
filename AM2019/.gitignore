@@ -1,6 +1,7 @@
 data/
 outputs/
 logs/
+wandb/
 results/
 __pycache__/
 .idea
