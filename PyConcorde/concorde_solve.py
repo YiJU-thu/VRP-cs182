@@ -111,7 +111,7 @@ def solve_one_instance(instance, type="EUC_2D", info="", **kws):
             opt_value, route, t = concorde_euc_2d(instance, **kws)
         elif type == "ATSP":
             opt_value, route, t = concorde_atsp_2d(instance, **kws)
-        logger.success(f"{info} |", f"opt_value: {opt_value:.2f}, t: {t:.2f}")
+        logger.success(f"{info} | opt_value: {opt_value:.2f}, t: {t:.2f}")
     except:
         logger.error(f"{info} |", "failed")
         opt_value, route, t = np.inf, None, -np.inf
@@ -131,6 +131,19 @@ def retrieve_res(out_fn, redo_failed=False):
     else:
         to_do_idx = np.where(res["obj"] == np.inf)[0]
     return res, to_do_idx
+
+
+def log_stats(data):
+    def calc_stats(x):
+        return np.mean(x), np.std(x), np.percentile(x, 5), np.percentile(x, 95)
+    
+    solved = np.where(data["time"] != -np.inf)[0]
+    t_stats = calc_stats(data["time"][solved])
+    obj_stats = calc_stats(data["obj"][solved])
+    logger.info(f"{'='*20} [{len(solved):^4}] Solved {'='*20}")
+    logger.info(f"time: {t_stats[0]:.3f}+-{t_stats[1]:.3f} (5%: {t_stats[2]:.3f}, 95%: {t_stats[3]:.3f})")
+    logger.info(f"obj: {obj_stats[0]:.1f}+-{obj_stats[1]:.1f} (5%: {obj_stats[2]:.3f}, 95%: {obj_stats[3]:.3f})")
+    logger.info("="*55)
 
 
 if __name__ == "__main__":
@@ -213,16 +226,18 @@ if __name__ == "__main__":
         res["time"][idx] = t
         res["tour"][idx] = route
 
-        if i % args.clear == 0:
+        if (i+1) % args.clear == 0:
             clear_concorde_files()
-        if i % args.save == 0:
+        if (i+1) % args.save == 0:
             with open(out_fn, "wb") as f:
                 pickle.dump(res, f)
+            log_stats(res)
     
     sleep(1)
     clear_concorde_files()
     with open(out_fn, "wb") as f:
         pickle.dump(res, f)
+    log_stats(res)
 
 
 
