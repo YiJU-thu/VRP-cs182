@@ -1,0 +1,1 @@
+python concorde_solve.py --type ATSP --I 100 --data amazon_eval_N50_I1000_seed1234_S_mini100.pkl --redo_failed --out_prefix TEST --clear 100 --save 100 --scale 10 --big_M 100
