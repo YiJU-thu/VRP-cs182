@@ -151,7 +151,7 @@ def get_normalize_coords_batch(coords):
     raise NotImplementedError
 
 
-def random_graph(n: int, num_graphs: int, config: dict = None, seed=None):
+def get_random_graph(n: int, num_graphs: int, config: dict = None, seed=None):
     """
     Creates a random graph with N vertices, by default random coordinates in
     [0, 1] x [0, 1]
