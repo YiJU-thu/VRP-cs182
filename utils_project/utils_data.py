@@ -2,7 +2,11 @@ import torch
 from torch.distributions.distribution import Distribution as Distribution
 from torch.distributions.uniform import Uniform
 import numpy as np
+from loguru import logger
 
+"""
+THIS NOTEBOOK WILL BE REMOVED LATER (Yi)
+"""
 
 # def create_dataset(n: int, config: dict):
 #     """
@@ -57,7 +61,8 @@ def create_dataset(num_graphs: int, n: int, config: dict = None):
             - "deform_distribution": a torch distribution
 
     """
-
+    logger.error("this method is abondoned, use utils_vrp/get_random_graph instead")
+    raise NotImplementedError
     if not config:
         # default config
         config = {
