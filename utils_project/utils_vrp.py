@@ -1,5 +1,8 @@
 import numpy as np
 from loguru import logger
+import torch
+from torch.distributions.distribution import Distribution as Distribution
+from torch.distributions.uniform import Uniform
 
 def deprecated(func):
     def new_func(*args, **kwargs):
@@ -148,20 +151,61 @@ def get_normalize_coords_batch(coords):
     raise NotImplementedError
 
 
-def get_random_graph(N, I, dist_mat_params, seed=None):
+def random_graph(n: int, num_graphs: int, config: dict = None, seed=None):
     """
-    Generate random coordinates in the unit square [0,1] x [0,1]
+    Creates a random graph with N vertices, by default random coordinates in
+    [0, 1] x [0, 1]
+
+    args:
+        num_graphs: batch size
+        n: number of vertices in graph
+        config: dataset configuration parameters, as dict
+            - "mode": str
+            - "seed": int or None
+            - "point_distribution": a torch distribution
+            - "deform_distribution": a torch distribution
+
     """
+
+    if not config:
+        # default config
+        config = {
+            "mode": "deform",
+            "x_distribution": Uniform(torch.tensor(0), torch.tensor(1)),
+            "y_distribution": Uniform(torch.tensor(0), torch.tensor(1)),
+            "deform_distribution": Uniform(torch.tensor(0.5), torch.tensor(2.0))
+        }
+
+    # TODO: don't fully understand - should seed be set here?
+    # following example of original random_graph funcition, but not sure
     # in training, we should NOT use the same seed for all instances / batchs / epoches ...
     # for reproducibility, set the seed OUTSIDE (for the entire training process)
-    if seed is not None:    
-        np.random.seed(seed)
-    coords = np.random.uniform(size=(I, N, 2))
-    rel_dist_mat = ...  # TODO: what is the reasonable distribution to draw from?
-    raise NotImplementedError
+    if seed is not None:
+        torch.manual_seed(seed)
 
-    dist_mat = rel_dist_mat * normed_dist_mat(coords, norm="L2")
-    return coords, rel_dist_mat, dist_mat
+    if config["mode"] == "deform":
+        # Generate points randomly in unit square according to
+        # config["point_distribution"], and deform the distance matrix
+        # according to config["deform_distribution"]
+
+        x_distribution: Distribution = config["x_distribution"]
+        y_distribution: Distribution = config["y_distribution"]
+        x_coords = x_distribution.sample(sample_shape=(num_graphs, n, 1))
+        y_coords = y_distribution.sample(sample_shape=(num_graphs, n, 1))
+        points = torch.cat((x_coords, y_coords), dim=-1)
+        assert points.shape == (num_graphs, n, 2)
+
+        euclidean_distance_matrix = torch.cdist(points, points, p=2)
+        assert euclidean_distance_matrix.shape == (num_graphs, n, n)
+
+        deform_dist: Distribution = config["deform_distribution"]
+        relative_dist_matrix = deform_dist.sample(sample_shape=(num_graphs, n, n))
+
+        distance_matrix = relative_dist_matrix * euclidean_distance_matrix
+        return points, relative_dist_matrix, distance_matrix
+
+    else:
+        raise NotImplementedError
 
 
 
@@ -190,4 +234,5 @@ def normalize_coords(*args, **kwargs):
 @deprecated
 def random_graph(*args, **kwargs):
     return get_random_graph(*args, **kwargs)
+
 
