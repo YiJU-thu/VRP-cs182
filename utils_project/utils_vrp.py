@@ -1,8 +1,15 @@
 import numpy as np
 from loguru import logger
 
+def deprecated(func):
+    def new_func(*args, **kwargs):
+        logger.warning(f"Call to deprecated function {func.__name__}. Use get_{func.__name__} instead.")
+        return func(*args, **kwargs)
+    return new_func
 
-def tour_len(tour, coords=None, dist_mat=None, norm=None):
+
+
+def get_tour_len(tour, coords=None, dist_mat=None, norm=None):
     """
     Compute the length of a tour.
 
@@ -36,7 +43,7 @@ def tour_len(tour, coords=None, dist_mat=None, norm=None):
         if norm == "Linf":
             return np.sum(np.max(np.abs(v1 - v), axis=1))
 
-def tour_len_batch(tour, coords=None, dist_mat=None, norm=None):
+def get_tour_len_batch(tour, coords=None, dist_mat=None, norm=None):
     """
     Compute the length of a batch of instances. (I=batch size)
 
@@ -52,7 +59,7 @@ def tour_len_batch(tour, coords=None, dist_mat=None, norm=None):
     raise NotImplementedError
 
 
-def normed_dist_mat(coords, norm="L2"):
+def get_normed_dist_mat(coords, norm="L2"):
     """
     Compute the normed distance matrix (i.e., the distance matrix when the norm is "L2").
     """
@@ -67,11 +74,11 @@ def normed_dist_mat(coords, norm="L2"):
         norm_dist_mat = np.max(np.abs(expand), axis=2)
     return norm_dist_mat
 
-def normed_dist_mat_batch(coords, norm="L2"):
+def get_normed_dist_mat_batch(coords, norm="L2"):
     raise NotImplementedError
 
 
-def rel_dist_mat(coords, dist_mat, norm="L2"):
+def get_rel_dist_mat(coords, dist_mat, norm="L2", fill=1):
     """
     Normalize the distance matrix relative to a simple normed distance, 
     i.e., how much the distance matrix deviates from 
@@ -81,35 +88,30 @@ def rel_dist_mat(coords, dist_mat, norm="L2"):
         coords (np.ndarray): shape = (N,2)
         dist_mat (np.ndarray): shape = (N,N)
         norm (str): "L1", "L2", "Linf", default = "L2"
+        fill (float): fill the relative distance matrix with this value where face x/0, default = 1
     """
 
     assert coords.shape == (len(dist_mat), 2)
     assert dist_mat.shape == (len(dist_mat), len(dist_mat))
-    assert norm in ["L1", "L2", "Linf"], "Invalid norm"
-
-    expand = coords[:, None, :] - coords[None, :, :]
-
-    if norm == "L2":
-        norm_dist_mat = np.sqrt((expand ** 2).sum(axis=2))
-    if norm == "L1":
-        norm_dist_mat = np.abs(expand).sum(axis=2)
-    if norm == "Linf":
-        norm_dist_mat = np.max(np.abs(expand), axis=2)
+    
+    norm_dist_mat = get_normed_dist_mat(coords, norm=norm)
     
     # find an OLS fit of dist_mat = k * norm_dist_mat
     # then normalize dist_mat = dist_mat / dist_mat_hat
 
+    # FIXME: we may skip the dist_mat_hat part, just divide by norm_dist_mat,
+    # the only concern is: in this case, should we still fill the diagonal with 1 (before or after normalization)? 
     y = dist_mat.flatten()
     x = norm_dist_mat.flatten()
     k = np.dot(x, y) / np.dot(x, x)
 
     dist_mat_hat = k * norm_dist_mat
-    dist_mat_rel = np.divide(dist_mat, dist_mat_hat, out=np.zeros_like(dist_mat), where=dist_mat_hat!=0)
-
+    dist_mat_rel = np.divide(dist_mat, dist_mat_hat, out=np.ones_like(dist_mat)*fill, where=dist_mat_hat!=0)
+    dist_mat_rel /= dist_mat_rel.mean() # normalize the mean to 1
     return dist_mat_rel
 
 
-def normalize_dist_mat(dist_mat):
+def get_normalize_dist_mat(dist_mat):
     """
     Normalize the distance matrix by dividing the max distance.
     """
@@ -118,11 +120,11 @@ def normalize_dist_mat(dist_mat):
     eps = 1e-3
     return (dist_mat-l) / max(u-l, eps)
 
-def normalize_dist_mat_batch(dist_mat):
+def get_normalize_dist_mat_batch(dist_mat):
     raise NotImplementedError
 
 
-def normalize_coords(coords):
+def get_normalize_coords(coords):
     """
     rescale the coords into the unit square [0,1] x [0,1]
     """
@@ -142,11 +144,11 @@ def normalize_coords(coords):
 
     return coords_normalized
 
-def normalize_coords_batch(coords):
+def get_normalize_coords_batch(coords):
     raise NotImplementedError
 
 
-def random_graph(N, I, dist_mat_params, seed=None):
+def get_random_graph(N, I, dist_mat_params, seed=None):
     """
     Generate random coordinates in the unit square [0,1] x [0,1]
     """
@@ -160,4 +162,32 @@ def random_graph(N, I, dist_mat_params, seed=None):
 
     dist_mat = rel_dist_mat * normed_dist_mat(coords, norm="L2")
     return coords, rel_dist_mat, dist_mat
-    
+
+
+
+
+
+@deprecated
+def tour_len(*args, **kwargs):
+    return get_tour_len(*args, **kwargs)
+
+@deprecated
+def normed_dist_mat(*args, **kwargs):
+    return get_normed_dist_mat(*args, **kwargs)
+
+@deprecated
+def normalize_dist_mat(*args, **kwargs):
+    return get_normalize_dist_mat(*args, **kwargs)
+
+@deprecated
+def rel_dist_mat(*args, **kwargs):
+    return get_rel_dist_mat(*args, **kwargs)
+
+@deprecated
+def normalize_coords(*args, **kwargs):
+    return get_normalize_coords(*args, **kwargs)
+
+@deprecated
+def random_graph(*args, **kwargs):
+    return get_random_graph(*args, **kwargs)
+
