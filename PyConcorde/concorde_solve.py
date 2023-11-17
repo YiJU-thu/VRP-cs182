@@ -13,7 +13,7 @@ _curr_dir = os.path.dirname(__file__)
 utils_dir = os.path.join(_curr_dir, '../utils_project')
 if utils_dir not in sys.path:
     sys.path.append(utils_dir)
-from utils_vrp import tour_len
+from utils_vrp import get_tour_len
 
 
 
@@ -71,7 +71,7 @@ def concorde_atsp_2d(dist_mat, scale=1, big_M=100, inf_M=1e7, tmp_idx=""):
     if np.all(route1 == np.roll(route2, 1)):
         route1 = route1[::-1]   # FIXME: I do not know why, but it works???
     
-    obj_actual = tour_len(tour=route1,dist_mat=dist_mat)
+    obj_actual = get_tour_len(tour=route1,dist_mat=dist_mat)
     # obj_actual should be similar to (obj+big_M*N)/scale
     obj_est = (obj + big_M*N) / scale
     eps = 1e-2 # 1%
@@ -94,7 +94,7 @@ def concorde_euc_2d(coords, scale=1):
     obj = sol.optimal_value
     route = sol.tour
 
-    obj_actual = tour_len(tour=route, coords=coords, norm="L2")
+    obj_actual = get_tour_len(tour=route, coords=coords, norm="L2")
     # obj_actual should be similar to (obj+big_M*N)/scale
     obj_est = obj / scale
     eps = 1e-2 # 1%
