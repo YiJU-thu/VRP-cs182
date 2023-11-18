@@ -1,5 +1,5 @@
 # run: conda env create --file environment.yml
-name: attention_tsp
+name: tsp
 channels:
 - pytorch
 dependencies:
@@ -12,3 +12,6 @@ dependencies:
 - pip
 - pip:
   - tensorboard_logger
+  - tensorflow
+  - wandb
+  - loguru
