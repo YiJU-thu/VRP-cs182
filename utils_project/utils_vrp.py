@@ -3,6 +3,8 @@ from loguru import logger
 import torch
 from torch.distributions.distribution import Distribution as Distribution
 from torch.distributions.uniform import Uniform
+from torch.distributions.normal import Normal
+from torch.distributions.log_normal import LogNormal
 
 def deprecated(func):
     def new_func(*args, **kwargs):
@@ -91,26 +93,21 @@ def get_rel_dist_mat(coords, dist_mat, norm="L2", fill=1):
         coords (np.ndarray): shape = (N,2)
         dist_mat (np.ndarray): shape = (N,N)
         norm (str): "L1", "L2", "Linf", default = "L2"
-        fill (float): fill the relative distance matrix with this value where face x/0, default = 1
+        fill (float): fill the relative distance matrix with this value where face x/0, default = 1 (arbitrary value works)
     """
 
     assert coords.shape == (len(dist_mat), 2)
     assert dist_mat.shape == (len(dist_mat), len(dist_mat))
     
+    # get the normed (default 'L2') distance matrix
     norm_dist_mat = get_normed_dist_mat(coords, norm=norm)
     
-    # find an OLS fit of dist_mat = k * norm_dist_mat
-    # then normalize dist_mat = dist_mat / dist_mat_hat
-
-    # FIXME: we may skip the dist_mat_hat part, just divide by norm_dist_mat,
-    # the only concern is: in this case, should we still fill the diagonal with 1 (before or after normalization)? 
-    y = dist_mat.flatten()
-    x = norm_dist_mat.flatten()
-    k = np.dot(x, y) / np.dot(x, x)
-
-    dist_mat_hat = k * norm_dist_mat
-    dist_mat_rel = np.divide(dist_mat, dist_mat_hat, out=np.ones_like(dist_mat)*fill, where=dist_mat_hat!=0)
-    dist_mat_rel /= dist_mat_rel.mean() # normalize the mean to 1
+    dist_mat_rel = np.divide(dist_mat, norm_dist_mat, out=np.ones_like(dist_mat)*fill, where=norm_dist_mat!=0)
+    # dist_mat_rel /= dist_mat_rel.mean() # normalize the mean to 1
+    # instead of normalize the mean to 1, we normalize the mean of log(x) to 0
+    eps = 1e-10
+    dist_mat_rel /= np.exp(np.log(dist_mat_rel+eps).mean())
+    
     return dist_mat_rel
 
 
@@ -151,61 +148,97 @@ def get_normalize_coords_batch(coords):
     raise NotImplementedError
 
 
-def get_random_graph(n: int, num_graphs: int, config: dict = None, seed=None):
+def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=None):
     """
-    Creates a random graph with N vertices, by default random coordinates in
-    [0, 1] x [0, 1]
+    Creates a batch of num_graphs random graph with N vertices.
+    In is always in a "standard" distribution, but we also generate "scale_factors" to transform it to a more realistic/diverse instance
 
     args:
         num_graphs: batch size
         n: number of vertices in graph
-        config: dataset configuration parameters, as dict
-            - "mode": str
-            - "seed": int or None
-            - "point_distribution": a torch distribution
-            - "deform_distribution": a torch distribution
+        non_Euc: if True, return coords, rel_dist_mat, dist_mat, rescale_factors; else, return coords, rescale_factors
+        rescale: if True, sample scale_factors from a log-normal distribution, indicates its deviation from the standard distribution
+        seed: random seed (set as None in training, since it should already be set OUTSIDE)
+    
+    return: a dict with keys
+        coords: shape = (num_graphs, n, 2)
+        rel_distance: shape = (num_graphs, n, n), if non_Euc=True
+        distance: shape = (num_graphs, n, n), if non_Euc=True
+        scale_factors: shape = (num_graphs, 3) if non_Euc=True, else (num_graphs,1)
 
     """
 
-    if not config:
-        # default config
-        config = {
-            "mode": "deform",
-            "x_distribution": Uniform(torch.tensor(0), torch.tensor(1)),
-            "y_distribution": Uniform(torch.tensor(0), torch.tensor(1)),
-            "deform_distribution": Uniform(torch.tensor(0.5), torch.tensor(2.0))
-        }
-
-    # TODO: don't fully understand - should seed be set here?
-    # following example of original random_graph funcition, but not sure
     # in training, we should NOT use the same seed for all instances / batchs / epoches ...
     # for reproducibility, set the seed OUTSIDE (for the entire training process)
     if seed is not None:
         torch.manual_seed(seed)
 
-    if config["mode"] == "deform":
-        # Generate points randomly in unit square according to
-        # config["point_distribution"], and deform the distance matrix
-        # according to config["deform_distribution"]
-
-        x_distribution: Distribution = config["x_distribution"]
-        y_distribution: Distribution = config["y_distribution"]
-        x_coords = x_distribution.sample(sample_shape=(num_graphs, n, 1))
-        y_coords = y_distribution.sample(sample_shape=(num_graphs, n, 1))
-        points = torch.cat((x_coords, y_coords), dim=-1)
-        assert points.shape == (num_graphs, n, 2)
-
-        euclidean_distance_matrix = torch.cdist(points, points, p=2)
-        assert euclidean_distance_matrix.shape == (num_graphs, n, n)
-
-        deform_dist: Distribution = config["deform_distribution"]
-        relative_dist_matrix = deform_dist.sample(sample_shape=(num_graphs, n, n))
-
-        distance_matrix = relative_dist_matrix * euclidean_distance_matrix
-        return points, relative_dist_matrix, distance_matrix
-
+    # for a real instance, we add three paramters to control its distribution:
+    # (1) sacle along y-axis (stretch coords vertically)
+    # (2) actaul_sym_std / sym_std, and (3) actual_asym_std / asym_std
+    # that is: we can recover the original data after transformed to our standard distribution with above three parameters
+    
+    rescale_factors_dim = 3 if non_Euc else 1
+    if rescale:
+        # sd = 0.5 -> 50% between exp(-0.5) and exp(0.5), i.e., (0.61, 1.65)
+        scale_factors = LogNormal(torch.tensor(0.0), torch.tensor(0.5)).sample(sample_shape=(num_graphs, rescale_factors_dim))
     else:
+        scale_factors = torch.ones((num_graphs,rescale_factors_dim))
+
+    assert scale_factors.shape == (num_graphs, rescale_factors_dim)
+
+
+    # Generate points randomly in unit square according to
+    points = Uniform(0, 1).sample(sample_shape=(num_graphs, n, 2))
+    assert points.shape == (num_graphs, n, 2)
+
+    euclidean_distance_matrix = torch.cdist(points, points, p=2)
+    assert euclidean_distance_matrix.shape == (num_graphs, n, n)
+
+    if not non_Euc:
+        return {"coords": points, "scale_factors": scale_factors}
+
+
+
+    # Yi: we decompose the relative matrix into two parts:
+    # (1) a symmetric matrix, X1, and (2) a matrix represents the "asymmetry", X2,
+    # so, relative matrix X = X1 * (1+X2)
+    # further, element in X1 follows a [log-normal] distribution, mu=0, sigma=sym_std(=0.5)
+    #       and element in X2 follows a [normal] distribution, mu=0, sigma=asym_std(=0.05)
+    
+    sym_std = 0.5
+    sym_log = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))
+    sym_rel_dist_mat = torch.exp(sym_std*np.sqrt(0.5)* (sym_log + sym_log.permute(0,2,1)))
+
+    asym_std = 0.05
+    asym = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))
+    asym_rel_dist_mat = asym_std*np.sqrt(0.5)* (asym - asym.permute(0,2,1))
+    
+    relative_dist_matrix = sym_rel_dist_mat * (1+asym_rel_dist_mat)
+    assert relative_dist_matrix.shape == (num_graphs, n, n)
+    
+    distance_matrix = relative_dist_matrix * euclidean_distance_matrix
+
+    return {"coords": points, "rel_distance": relative_dist_matrix, "distance": distance_matrix, "scale_factors": scale_factors}
+
+
+def get_random_graph_np(*args, **kwargs):
+    data = get_random_graph(*args, **kwargs)
+    for key in data:
+        data[key] = data[key].numpy()
+    return data
+
+    
+def normalize_graph(data, rescale=False):
+    if isinstance(data, dict) and "distance" in data:  # non-Euclidean
+        coords = data["coords"]
+        dist_mat = data["distance"]
         raise NotImplementedError
+    else:   # Euclidean, (N,2)
+        coords = data
+        raise NotImplementedError
+    
+
 
 
 
