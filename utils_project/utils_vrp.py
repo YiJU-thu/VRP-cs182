@@ -13,6 +13,8 @@ def deprecated(func):
     return new_func
 
 
+def get_euclidean_dist_matrix(points):
+    return torch.cdist(points, points, p=2)
 
 def get_tour_len(tour, coords=None, dist_mat=None, norm=None):
     """
@@ -192,7 +194,7 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
     points = Uniform(0, 1).sample(sample_shape=(num_graphs, n, 2))
     assert points.shape == (num_graphs, n, 2)
 
-    euclidean_distance_matrix = torch.cdist(points, points, p=2)
+    euclidean_distance_matrix = get_euclidean_dist_matrix(points)
     assert euclidean_distance_matrix.shape == (num_graphs, n, n)
 
     if not non_Euc:
@@ -228,18 +230,40 @@ def get_random_graph_np(*args, **kwargs):
         data[key] = data[key].numpy()
     return data
 
-    
+
 def normalize_graph(data, rescale=False):
     if isinstance(data, dict) and "distance" in data:  # non-Euclidean
         coords = data["coords"]
         dist_mat = data["distance"]
-        raise NotImplementedError
+        assert coords.shape == (len(coords), 2)
+        (n, _) = coords.shape
+        assert dist_mat.shape == (n, n)
+
+        normalized_coords = get_normalize_coords(coords)
+
+        # scale distance matrix to normalized coords
+        coords_min = coords.min(axis=0)
+        coords_max = coords.max(axis=0)
+        scale = coords_max.max() - coords_min.min()
+        dist_mat = dist_mat / scale
+
+        #FIXME: check should this be computed wrt coords or normalized_coords?
+        norm_coords_np = normalized_coords.numpy()
+        dist_mat_np = dist_mat.numpy()
+
+        dist_mat_rel = torch.from_numpy(get_rel_dist_mat(norm_coords_np, dist_mat_np))
+        rel_norm_scale = torch.exp(torch.sum(torch.log(dist_mat_rel)) / n**2)
+        assert rel_norm_scale.shape == (1,)
+        dist_mat_rel = dist_mat_rel / rel_norm_scale
+
+        return {"coords": normalized_coords, "dist_mat": dist_mat, "dist_mat_rel": dist_mat_rel}
     else:   # Euclidean, (N,2)
         coords = data
         raise NotImplementedError
     
 
-
+def normalize_graph_batch(data, rescale=False):
+    raise NotImplementedError
 
 
 
