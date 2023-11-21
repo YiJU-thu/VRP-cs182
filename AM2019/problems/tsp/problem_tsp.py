@@ -21,6 +21,9 @@ class TSP(object):
         # Gather dataset in order of tour
         d = dataset.gather(1, pi.unsqueeze(-1).expand_as(dataset))
 
+        # FIXME: don't fully understand API - should dictionary be passed in?
+        # use utils_vrp/recover_graph to recover true distance matrix here
+
         # Length is distance (L2-norm of difference) from each next location from its prev and of last from first
         return (d[:, 1:] - d[:, :-1]).norm(p=2, dim=2).sum(1) + (d[:, 0] - d[:, -1]).norm(p=2, dim=1), None
 
