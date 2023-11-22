@@ -18,4 +18,4 @@
 #
 ## Command(s) to run:
 python run.py --graph_size 50 --run_name k0_rel_svo1080 --no_progress_bar\
- --rank_k_approx 0 --rescale_dist --who YJ
+ --non_Euc --rank_k_approx 0 --rescale_dist --who YJ
