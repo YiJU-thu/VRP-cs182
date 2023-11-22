@@ -78,6 +78,8 @@ def run(opts):
         opts.embedding_dim,
         opts.hidden_dim,
         problem,
+        rank_k_approx=opts.rank_k_approx,
+        rescale_dist=opts.rescale_dist, 
         n_encode_layers=opts.n_encode_layers,
         mask_inner=True,
         mask_logits=True,
