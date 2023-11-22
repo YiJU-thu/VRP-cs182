@@ -45,6 +45,8 @@ class AttentionModel(nn.Module):
                  embedding_dim,
                  hidden_dim,
                  problem,
+                 rank_k_approx=0, # Yifan: add node features
+                 rescale_dist=False,
                  n_encode_layers=2,
                  tanh_clipping=10.,
                  mask_inner=True,
@@ -75,6 +77,11 @@ class AttentionModel(nn.Module):
         self.checkpoint_encoder = checkpoint_encoder
         self.shrink_size = shrink_size
 
+        self.rank_k_approx = rank_k_approx
+        self.rescale_dist = rescale_dist
+        
+        assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
+
         # Problem specific context parameters (placeholder and step context dimension)
         if self.is_vrp or self.is_orienteering or self.is_pctsp:
             # Embedding of last node + remaining_capacity / remaining length / remaining prize to collect
@@ -92,11 +99,12 @@ class AttentionModel(nn.Module):
                 self.project_node_step = nn.Linear(1, 3 * embedding_dim, bias=False)
         else:  # TSP
             assert problem.NAME == "tsp", "Unsupported problem: {}".format(problem.NAME)
-            step_context_dim = 2 * embedding_dim  # Embedding of first and last node
-            node_dim = 2  # x, y
+            # Yifan: add node features
+            node_dim = 2 + 2 * rank_k_approx  # x, y, u_i_k, v_i_k
+            step_context_dim = node_dim * embedding_dim  # Embedding of first and last node
             
             # Learned input symbols for first action
-            self.W_placeholder = nn.Parameter(torch.Tensor(2 * embedding_dim))
+            self.W_placeholder = nn.Parameter(torch.Tensor(node_dim * embedding_dim))
             self.W_placeholder.data.uniform_(-1, 1)  # Placeholder should be in range of activations
 
         self.init_embed = nn.Linear(node_dim, embedding_dim)
@@ -105,7 +113,9 @@ class AttentionModel(nn.Module):
             n_heads=n_heads,
             embed_dim=embedding_dim,
             n_layers=self.n_encode_layers,
-            normalization=normalization
+            rank_k_approx=rank_k_approx, 
+            normalization=normalization,
+            rescale_dist=rescale_dist
         )
 
         # For each node we compute (glimpse key, glimpse value, logit key) so 3 * embedding_dim
@@ -129,10 +139,15 @@ class AttentionModel(nn.Module):
         :return:
         """
 
+        assert self.checkpoint_encoder == False, "Yifan hasn't implemented checkpoint :("
         if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
             embeddings, _ = checkpoint(self.embedder, self._init_embed(input))
         else:
-            embeddings, _ = self.embedder(self._init_embed(input))
+            init_embed, S = self._init_embed(input)
+            if self.rescale_dist:
+                embeddings, _ = self.embedder(init_embed, S, scale_dist=input['scale_dist'])
+            else:
+                embeddings, _ = self.embedder(init_embed, S)
 
         _log_p, pi = self._inner(input, embeddings)
 
@@ -200,26 +215,37 @@ class AttentionModel(nn.Module):
 
     def _init_embed(self, input):
 
-        if self.is_vrp or self.is_orienteering or self.is_pctsp:
-            if self.is_vrp:
-                features = ('demand', )
-            elif self.is_orienteering:
-                features = ('prize', )
-            else:
-                assert self.is_pctsp
-                features = ('deterministic_prize', 'penalty')
-            return torch.cat(
-                (
-                    self.init_embed_depot(input['depot'])[:, None, :],
-                    self.init_embed(torch.cat((
-                        input['loc'],
-                        *(input[feat][:, :, None] for feat in features)
-                    ), -1))
-                ),
-                1
-            )
+        # if self.is_vrp or self.is_orienteering or self.is_pctsp:
+        #     if self.is_vrp:
+        #         features = ('demand', )
+        #     elif self.is_orienteering:
+        #         features = ('prize', )
+        #     else:
+        #         assert self.is_pctsp
+        #         features = ('deterministic_prize', 'penalty')
+        #     return torch.cat(
+        #         (
+        #             self.init_embed_depot(input['depot'])[:, None, :],
+        #             self.init_embed(torch.cat((
+        #                 input['loc'],
+        #                 *(input[feat][:, :, None] for feat in features)
+        #             ), -1))
+        #         ),
+        #         1
+        #     )
+        
         # TSP
-        return self.init_embed(input)
+        assert isinstance(input, dict)
+        # Yifan TODO: svd and add node features, then go through the linear layer
+        coords = input['coords']
+        if self.rescale_dist:
+            rel_dist_mat = input['rel_dist_mat']
+            U, S, V = torch.linalg.svd(rel_dist_mat)
+        else:
+            dist_mat = input['dist_mat']
+            U, S, V = torch.linalg.svd(dist_mat)
+        nodes = torch.cat([coords, U[..., :self.rank_k_approx], V[..., :self.rank_k_approx]])
+        return self.init_embed(nodes), S
 
     def _inner(self, input, embeddings):
 
