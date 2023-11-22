@@ -235,6 +235,7 @@ if __name__ == "__main__":
         res["tour"][idx] = route
 
         if (i+1) % args.clear == 0:
+            sleep(0.5)
             clear_concorde_files()
         if (i+1) % args.save == 0:
             with open(out_fn, "wb") as f:
