@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from torch import nn
+from torchvision.ops import MLP
 import math
 
 
@@ -186,6 +187,7 @@ class GraphAttentionEncoder(nn.Module):
             n_heads,
             embed_dim,
             n_layers,
+            non_Euc=False,
             rank_k_approx=0,
             rescale_dist=False,
             node_dim=None,
@@ -204,12 +206,15 @@ class GraphAttentionEncoder(nn.Module):
 
         self.rescale_dist = rescale_dist
         self.rank_k_approx = rank_k_approx
-        if rescale_dist:
-            self.graph_embed = nn.Linear(embed_dim + rank_k_approx + 3, embed_dim)
-        else:
-            self.graph_embed = nn.Linear(embed_dim + rank_k_approx, embed_dim)
+        self.non_Euc = non_Euc
 
-    def forward(self, x, S, scale_dist=None, mask=None):
+        if rescale_dist:
+            scale_factors_dim = 3 if non_Euc else 1        
+        graph_embed_layers = 3  # TODO: make this a parameter
+        add_graph_dim = rank_k_approx + scale_factors_dim
+        self.graph_embed = MLP(embed_dim+add_graph_dim, [embed_dim for _ in range(graph_embed_layers)])
+
+    def forward(self, x, S, scale_factors=None, mask=None):
 
         assert mask is None, "TODO mask not yet supported!"
 
@@ -224,13 +229,10 @@ class GraphAttentionEncoder(nn.Module):
         # (and scale_dist if rescale_dist is True) going through a linear layer
         # (batch_size, embed_dim)
         if self.rescale_dist:
-            assert scale_dist is not None, "rescale_dist=True but scale_dist is None"
-            graph_init_embed = torch.cat([h.mean(dim=1), 
-                                         S[:, :self.rank_k_approx], 
-                                         scale_dist], dim=1)
+            assert scale_factors is not None, "rescale_dist=True but scale_dist is None"
+            graph_init_embed = torch.cat([h.mean(dim=1), S, scale_factors], dim=1)
         else:
-            graph_init_embed = torch.cat([h.mean(dim=1),
-                                         S[:, :self.rank_k_approx]], dim=1)
+            graph_init_embed = torch.cat([h.mean(dim=1), S], dim=1)
         graph_embedding = self.graph_embed(graph_init_embed)
             
 
