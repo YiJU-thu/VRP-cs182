@@ -25,7 +25,7 @@ API_KEY = os.environ.get("WANDB_API_KEY")
 
 @logger.catch
 def run(opts):
-    project = "{}{}_{}{}".format("nE_"*(not opts.non_Euc), opts.problem, opts.graph_size, "_rS"*(opts.rescale_dist))
+    project = "{}{}_{}{}".format("nE_"*(opts.non_Euc), opts.problem, opts.graph_size, "_rS"*(opts.rescale_dist))
     # nE = non-Euclidean, rS=rescale_dist
     logger.add(f"{project}.log", rotation="10 MB")
 
