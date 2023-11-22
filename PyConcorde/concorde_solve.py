@@ -43,7 +43,7 @@ def concorde_atsp_matrix(dist_mat, scale=1, inf_M=1e7, big_M=1):
 
 
 @logger.catch
-def concorde_atsp_2d(dist_mat, scale=1, big_M=100, inf_M=1e7, tmp_idx=""):
+def concorde_atsp_2d(dist_mat, scale=1, big_M=100, inf_M=1e7, tmp_idx="", time_bound=-1):
     
     N = dist_mat.shape[0]
 
@@ -58,10 +58,11 @@ def concorde_atsp_2d(dist_mat, scale=1, big_M=100, inf_M=1e7, tmp_idx=""):
     solver = TSPSolver.from_tspfile(tmp_fn)
     
     t0 = perf_counter()
-    sol = solver.solve(verbose=False)
+    sol = solver.solve(verbose=False, time_bound=time_bound)
     t = perf_counter() - t0
     obj = sol.optimal_value
     route = sol.tour
+    assert not sol.hit_time_bound, f"time bound hit: {time_bound} sec"
 
     route = route%N
     route1 = route[::2]
@@ -84,15 +85,16 @@ def concorde_atsp_2d(dist_mat, scale=1, big_M=100, inf_M=1e7, tmp_idx=""):
 
 
 @logger.catch
-def concorde_euc_2d(coords, scale=1):
+def concorde_euc_2d(coords, scale=1, time_bound=-1):
     xs, ys = coords[:,0], coords[:,1]
     xs, ys = xs * scale, ys * scale
     solver = TSPSolver.from_data(xs=xs, ys=ys, norm="EUC_2D")
     t0 = perf_counter()
-    sol = solver.solve(verbose=False)
+    sol = solver.solve(verbose=False, time_bound=time_bound)
     t = perf_counter() - t0
     obj = sol.optimal_value
     route = sol.tour
+    assert not sol.hit_time_bound, f"time bound hit: {time_bound} sec"
 
     obj_actual = get_tour_len(tour=route, coords=coords, norm="L2")
     # obj_actual should be similar to (obj+big_M*N)/scale
@@ -138,11 +140,14 @@ def log_stats(data):
         return np.mean(x), np.std(x), np.percentile(x, 5), np.percentile(x, 95)
     
     solved = np.where(data["time"] != -np.inf)[0]
+    if len(solved) == 0:
+        logger.info("No solved instances")
+        return
     t_stats = calc_stats(data["time"][solved])
     obj_stats = calc_stats(data["obj"][solved])
     logger.info(f"{'='*20} [{len(solved):^4}] Solved {'='*20}")
     logger.info(f"time: {t_stats[0]:.3f}+-{t_stats[1]:.3f} (5%: {t_stats[2]:.3f}, 95%: {t_stats[3]:.3f})")
-    logger.info(f"obj: {obj_stats[0]:.1f}+-{obj_stats[1]:.1f} (5%: {obj_stats[2]:.3f}, 95%: {obj_stats[3]:.3f})")
+    logger.info(f"obj: {obj_stats[0]:.3f}+-{obj_stats[1]:.3f} (5%: {obj_stats[2]:.3f}, 95%: {obj_stats[3]:.3f})")
     logger.info("="*55)
 
 
@@ -161,6 +166,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', type=str, default=None, help='data directory. use /dataset if None')
     parser.add_argument('--scale', type=float, default=1e1, help='scale the distance matrix / coords')  # FIXME: may auto find the right scale!
     parser.add_argument('--big_M', type=float, default=1e2, help='big M in ATSP')
+    parser.add_argument('--time_bound', type=float, default=-1, help='time bound for each instance, default -1 means no time bound')
     parser.add_argument('--out_dir', type=str, default=None, help='output directory. use current dir if None')
     parser.add_argument('--out_prefix', type=str, default="TSP_concorde", help='output prefix')
     parser.add_argument('--clear', type=int, default=100, help='clear .res files every CLEAR instances')
@@ -218,9 +224,11 @@ if __name__ == "__main__":
         idx = to_do_idx[i]
         
         if args.type == "ATSP": 
-            opt_value, route, t = solve_one_instance(instance=data["distance"][idx], type="ATSP", info=f"id={idx}", scale=args.scale, big_M=args.big_M)
+            opt_value, route, t = solve_one_instance(instance=data["distance"][idx], type="ATSP", 
+                    info=f"id={idx}", scale=args.scale, big_M=args.big_M, time_bound=args.time_bound)
         elif args.type == "EUC_2D":
-            opt_value, route, t = solve_one_instance(instance=data[idx], type="EUC_2D", info=f"id={idx}", scale=args.scale)
+            opt_value, route, t = solve_one_instance(instance=data[idx], type="EUC_2D", 
+                    info=f"id={idx}", scale=args.scale, time_bound=args.time_bound)
         
         res["obj"][idx] = opt_value
         res["time"][idx] = t
