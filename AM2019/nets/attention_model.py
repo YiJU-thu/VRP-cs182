@@ -45,6 +45,10 @@ class AttentionModel(nn.Module):
                  embedding_dim,
                  hidden_dim,
                  problem,
+                 non_Euc=False,
+                 rank_k_approx=0, # Yifan: add node features
+                 svd_original_edge=False,
+                 rescale_dist=False,
                  n_encode_layers=2,
                  tanh_clipping=10.,
                  mask_inner=True,
@@ -75,6 +79,13 @@ class AttentionModel(nn.Module):
         self.checkpoint_encoder = checkpoint_encoder
         self.shrink_size = shrink_size
 
+        self.non_Euc = non_Euc
+        self.rank_k_approx = rank_k_approx
+        self.svd_original_edge = svd_original_edge
+        self.rescale_dist = rescale_dist
+        
+        assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
+
         # Problem specific context parameters (placeholder and step context dimension)
         if self.is_vrp or self.is_orienteering or self.is_pctsp:
             # Embedding of last node + remaining_capacity / remaining length / remaining prize to collect
@@ -92,8 +103,9 @@ class AttentionModel(nn.Module):
                 self.project_node_step = nn.Linear(1, 3 * embedding_dim, bias=False)
         else:  # TSP
             assert problem.NAME == "tsp", "Unsupported problem: {}".format(problem.NAME)
-            step_context_dim = 2 * embedding_dim  # Embedding of first and last node
-            node_dim = 2  # x, y
+            # Yifan: add node features
+            node_dim = 2 + 2 * rank_k_approx  # x, y, u_i_k, v_i_k
+            step_context_dim = 2 * embedding_dim  # Embedding of first and last node, "2" here means "first" and "last"
             
             # Learned input symbols for first action
             self.W_placeholder = nn.Parameter(torch.Tensor(2 * embedding_dim))
@@ -105,7 +117,10 @@ class AttentionModel(nn.Module):
             n_heads=n_heads,
             embed_dim=embedding_dim,
             n_layers=self.n_encode_layers,
-            normalization=normalization
+            non_Euc=non_Euc,
+            rank_k_approx=rank_k_approx, 
+            normalization=normalization,
+            rescale_dist=rescale_dist
         )
 
         # For each node we compute (glimpse key, glimpse value, logit key) so 3 * embedding_dim
@@ -129,10 +144,37 @@ class AttentionModel(nn.Module):
         :return:
         """
 
+        # Yi: add sanity check for input
+        assert isinstance(input, dict), "Input must be a dictionary"
+        assert 'coords' in input, "Input must contain 'coords' key"
+        I, N, _ = input['coords'].shape
+        if not self.non_Euc: # input is Euclidean
+            assert self.rank_k_approx == 0, "rank_k_approx is not supported for Euclidean input"
+            scale_factors_dim = 1
+        else: # non-Euclidean
+            assert "rel_distance" in input, "Input must contain 'rel_distance' key"
+            assert input["distance"].shape == (I, N, N), "distance must be of shape (I, N, N)"
+            assert input["rel_distance"].shape == (I, N, N), "rel_distance must be of shape (I, N, N)"
+            scale_factors_dim = 3
+
+        if self.rescale_dist:
+            assert input['scale_factors'].shape == (I, scale_factors_dim), "scale_dist must be of shape (I, scale_factors_dim)"
+        else:
+            assert input.get('scale_factors') is None, "scale_dist must be None if rescale_dist is False"
+        # ================================================
+
+
+        assert self.checkpoint_encoder == False, "Yifan hasn't implemented checkpoint :("
         if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
             embeddings, _ = checkpoint(self.embedder, self._init_embed(input))
         else:
-            embeddings, _ = self.embedder(self._init_embed(input))
+            # init_embed: (batch_size, graph_size, embedding_dim) - h^0_i's
+            # S: (batch_size, graph_size, rank_k_approx) - first k singular values of the (rel) distance matrix
+            init_embed, S = self._init_embed(input)
+            if self.rescale_dist:
+                embeddings, _ = self.embedder(init_embed, S, scale_factors=input['scale_factors'])
+            else:
+                embeddings, _ = self.embedder(init_embed, S)
 
         _log_p, pi = self._inner(input, embeddings)
 
@@ -200,6 +242,7 @@ class AttentionModel(nn.Module):
 
     def _init_embed(self, input):
 
+        # Yi: it's safe: you have assert problem.NAME == 'tsp' above
         if self.is_vrp or self.is_orienteering or self.is_pctsp:
             if self.is_vrp:
                 features = ('demand', )
@@ -218,8 +261,20 @@ class AttentionModel(nn.Module):
                 ),
                 1
             )
+        
         # TSP
-        return self.init_embed(input)
+        # Yifan TODO: svd and add node features, then go through the linear layer
+        coords = input['coords']
+        if self.rank_k_approx == 0:
+            nodes = coords
+            S = torch.zeros(coords.shape[0], 0, device=coords.device)   # shape (batch_size, 0)
+        else:
+            mat_to_svd = input['distance'] if self.svd_original_edge else input['rel_distance']
+            U, S, V = torch.linalg.svd(mat_to_svd)
+            nodes = torch.cat([coords, U[..., :self.rank_k_approx], V[..., :self.rank_k_approx]])
+            S = S[..., :self.rank_k_approx]
+        assert nodes.shape == (coords.shape[0], coords.shape[1], 2 + 2 * self.rank_k_approx)
+        return self.init_embed(nodes), S
 
     def _inner(self, input, embeddings):
 

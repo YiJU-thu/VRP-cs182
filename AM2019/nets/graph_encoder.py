@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from torch import nn
+from torchvision.ops import MLP
 import math
 
 
@@ -186,6 +187,9 @@ class GraphAttentionEncoder(nn.Module):
             n_heads,
             embed_dim,
             n_layers,
+            non_Euc=False,
+            rank_k_approx=0,
+            rescale_dist=False,
             node_dim=None,
             normalization='batch',
             feed_forward_hidden=512
@@ -200,16 +204,39 @@ class GraphAttentionEncoder(nn.Module):
             for _ in range(n_layers)
         ))
 
-    def forward(self, x, mask=None):
+        self.rescale_dist = rescale_dist
+        self.rank_k_approx = rank_k_approx
+        self.non_Euc = non_Euc
+
+        if rescale_dist:
+            scale_factors_dim = 3 if non_Euc else 1        
+        graph_embed_layers = 3  # TODO: make this a parameter
+        add_graph_dim = rank_k_approx + scale_factors_dim
+        self.graph_embed = MLP(embed_dim+add_graph_dim, [embed_dim for _ in range(graph_embed_layers)])
+
+    def forward(self, x, S, scale_factors=None, mask=None):
 
         assert mask is None, "TODO mask not yet supported!"
 
+        # Yifan TODO: rewrite this part to add singular values of the distance matrix to the graph embedding
+        
         # Batch multiply to get initial embeddings of nodes
         h = self.init_embed(x.view(-1, x.size(-1))).view(*x.size()[:2], -1) if self.init_embed is not None else x
 
         h = self.layers(h)
 
+        # the embedding of the graph is the concatenation of the average of h, the first k singular values
+        # (and scale_dist if rescale_dist is True) going through a linear layer
+        # (batch_size, embed_dim)
+        if self.rescale_dist:
+            assert scale_factors is not None, "rescale_dist=True but scale_dist is None"
+            graph_init_embed = torch.cat([h.mean(dim=1), S, scale_factors], dim=1)
+        else:
+            graph_init_embed = torch.cat([h.mean(dim=1), S], dim=1)
+        graph_embedding = self.graph_embed(graph_init_embed)
+            
+
         return (
             h,  # (batch_size, graph_size, embed_dim)
-            h.mean(dim=1),  # average to get embedding of graph, (batch_size, embed_dim)
+            graph_embedding # (batch_size, embed_dim)
         )

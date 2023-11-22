@@ -31,6 +31,8 @@ def torch_load_cpu(load_path):
 def move_to(var, device):
     if isinstance(var, dict):
         return {k: move_to(v, device) for k, v in var.items()}
+    if var is None:
+        return None
     return var.to(device)
 
 

@@ -74,7 +74,7 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
 
     # Generate new training data for each epoch
     training_dataset = baseline.wrap_dataset(problem.make_dataset(
-        size=opts.graph_size, num_samples=opts.epoch_size, distribution=opts.data_distribution))
+        size=opts.graph_size, num_samples=opts.epoch_size, non_Euc=opts.non_Euc, rescale=opts.rescale_dist, distribution=opts.data_distribution))
     training_dataloader = DataLoader(training_dataset, batch_size=opts.batch_size, num_workers=1)
 
     # Put model in train mode!
@@ -82,6 +82,10 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     set_decode_type(model, "sampling")
 
     for batch_id, batch in enumerate(tqdm(training_dataloader, disable=opts.no_progress_bar)):
+
+        if opts.rescale_dist:
+            batch['scale_factors'] = None
+
 
         train_batch(
             model,
