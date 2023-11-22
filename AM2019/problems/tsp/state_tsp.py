@@ -39,13 +39,20 @@ class StateTSP(NamedTuple):
         )
 
     @staticmethod
-    def initialize(loc, visited_dtype=torch.uint8):
+    def initialize(data, visited_dtype=torch.uint8):
+
+        loc = data['coords']
+        if 'distance' in data:
+            dist = data['distance']
+        else:
+            dist = (loc[:, :, None, :] - loc[:, None, :, :]).norm(p=2, dim=-1)
+
 
         batch_size, n_loc, _ = loc.size()
         prev_a = torch.zeros(batch_size, 1, dtype=torch.long, device=loc.device)
         return StateTSP(
             loc=loc,
-            dist=(loc[:, :, None, :] - loc[:, None, :, :]).norm(p=2, dim=-1),
+            dist=dist,
             ids=torch.arange(batch_size, dtype=torch.int64, device=loc.device)[:, None],  # Add steps dimension
             first_a=prev_a,
             prev_a=prev_a,
@@ -67,7 +74,7 @@ class StateTSP(NamedTuple):
 
         assert self.all_finished()
         # assert self.visited_.
-
+        raise NotImplementedError
         return self.lengths + (self.loc[self.ids, self.first_a, :] - self.cur_coord).norm(p=2, dim=-1)
 
     def update(self, selected):

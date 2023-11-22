@@ -81,12 +81,6 @@ def get_options(args=None):
     parser.add_argument('--no_progress_bar', action='store_true', help='Disable progress bar')
 
 
-    # TODO: add some options for setting non-Euclidean cases & training
-    parser.add_argument('--non_euclidean', action='store_true', help='Use a detailed distance matrix for cost evaluation')
-    # TODO TODO TODO TODO
-    # TODO
-    # TODO
-
 
     opts = parser.parse_args(args)
 

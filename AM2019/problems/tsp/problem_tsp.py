@@ -4,6 +4,7 @@ import os, sys
 import pickle
 from problems.tsp.state_tsp import StateTSP
 from utils.beam_search import beam_search
+from loguru import logger
 
 curr_path = os.path.dirname(__file__)
 utils_vrp_path = os.path.join(curr_path, '..', '..', '..', 'utils_project')

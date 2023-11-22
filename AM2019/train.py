@@ -11,6 +11,7 @@ from nets.attention_model import set_decode_type
 from utils.log_utils import log_values
 from utils import move_to
 
+from loguru import logger
 
 def get_inner_model(model):
     return model.module if isinstance(model, DataParallel) else model
@@ -37,11 +38,19 @@ def rollout(model, dataset, opts):
             cost, _ = model(move_to(bat, opts.device))
         return cost.data.cpu()
 
-    return torch.cat([
-        eval_model_bat(bat)
-        for bat
-        in tqdm(DataLoader(dataset, batch_size=opts.eval_batch_size), disable=opts.no_progress_bar)
-    ], 0)
+    val = []
+    for batch in tqdm(DataLoader(dataset, batch_size=opts.eval_batch_size), disable=opts.no_progress_bar):
+        if not opts.rescale_dist:
+            if 'scale_factors' in batch.keys():
+                batch['scale_factors'] = None
+            elif 'data' in batch.keys():
+                batch['data']['scale_factors'] = None
+            else:
+                raise ValueError("No scale_factors in batch")
+        val.append(eval_model_bat(batch))
+
+
+    return torch.cat(val, 0)
 
 
 def clip_grad_norms(param_groups, max_norm=math.inf):
@@ -82,9 +91,13 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     set_decode_type(model, "sampling")
 
     for batch_id, batch in enumerate(tqdm(training_dataloader, disable=opts.no_progress_bar)):
-
-        if opts.rescale_dist:
-            batch['scale_factors'] = None
+        if not opts.rescale_dist:
+            if 'scale_factors' in batch.keys():
+                batch['scale_factors'] = None
+            elif 'data' in batch.keys():
+                batch['data']['scale_factors'] = None
+            else:
+                raise ValueError("No scale_factors in batch")
 
 
         train_batch(

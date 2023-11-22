@@ -160,7 +160,7 @@ class AttentionModel(nn.Module):
         if self.rescale_dist:
             assert input['scale_factors'].shape == (I, scale_factors_dim), "scale_dist must be of shape (I, scale_factors_dim)"
         else:
-            assert input.get('scale_factors') is None, "scale_dist must be None if rescale_dist is False"
+            assert input.get('scale_factors') is None, "scale_dist must be None if rescale_dist is False, but get {}".format(input.get('scale_factors'))
         # ================================================
 
 
@@ -271,7 +271,7 @@ class AttentionModel(nn.Module):
         else:
             mat_to_svd = input['distance'] if self.svd_original_edge else input['rel_distance']
             U, S, V = torch.linalg.svd(mat_to_svd)
-            nodes = torch.cat([coords, U[..., :self.rank_k_approx], V[..., :self.rank_k_approx]])
+            nodes = torch.cat([coords, U[..., :self.rank_k_approx], V[..., :self.rank_k_approx]], dim=2)
             S = S[..., :self.rank_k_approx]
         assert nodes.shape == (coords.shape[0], coords.shape[1], 2 + 2 * self.rank_k_approx)
         return self.init_embed(nodes), S
