@@ -87,9 +87,19 @@ def get_tour_len_torch(data, tour):
     else:
         dist_mat = get_euclidean_dist_matrix(data["coords"])
     
-    dist_mat = data["distance"]
-    assert dist_mat.shape == (len(tour), len(tour))
-    return torch.sum(dist_mat[tour, torch.roll(tour, -1)])
+    dist_mat = data["distance"] # shape=(I,N,N)
+    (I, N, _) = data["coords"].shape
+    assert tour.shape == (I, N)
+    t0 = tour.flatten()
+    t1 = torch.roll(tour, -1, dims=1).flatten()
+    idx_flatten = torch.arange(I * N, device=tour.device) // N
+    cost = dist_mat[idx_flatten, t0, t1].reshape(I, N) # shape=(I,N)
+    cost = torch.sum(cost, dim=1)   # shape=(I,)
+
+
+    c = torch.sum(dist_mat[0][tour[0], torch.roll(tour[0],-1)])
+    assert torch.allclose(c, cost[0])
+    return cost
 
 
 
