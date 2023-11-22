@@ -7,15 +7,24 @@ from torch.distributions.uniform import Uniform
 from torch.distributions.normal import Normal
 from torch.distributions.log_normal import LogNormal
 
+
 def deprecated(func):
     def new_func(*args, **kwargs):
         logger.warning(f"Call to deprecated function {func.__name__}. Use get_{func.__name__} instead.")
         return func(*args, **kwargs)
+
     return new_func
+
+
+def to_np(data):
+    for key in data:
+        data[key] = data[key].numpy()
+    return data
 
 
 def get_euclidean_dist_matrix(points):
     return torch.cdist(points, points, p=2)
+
 
 def get_tour_len(tour, coords=None, dist_mat=None, norm=None):
     """
@@ -51,6 +60,7 @@ def get_tour_len(tour, coords=None, dist_mat=None, norm=None):
         if norm == "Linf":
             return np.sum(np.max(np.abs(v1 - v), axis=1))
 
+
 def get_tour_len_batch(tour, coords=None, dist_mat=None, norm=None):
     """
     Compute the length of a batch of instances. (I=batch size)
@@ -82,8 +92,20 @@ def get_normed_dist_mat(coords, norm="L2"):
         norm_dist_mat = np.max(np.abs(expand), axis=2)
     return norm_dist_mat
 
+
 def get_normed_dist_mat_batch(coords, norm="L2"):
-    raise NotImplementedError
+    """
+    Batched version of get_normed_dist_mat, using torch.
+    """
+    assert norm in ["L1", "L2", "Linf"], "Invalid norm"
+    if norm == "L1":
+        pnorm = 1.0
+    elif norm == "L2":
+        pnorm = 2.0
+    else:
+        pnorm = float("Inf")
+    norm_dist_mat = torch.cdist(coords, coords, p=pnorm)
+    return norm_dist_mat
 
 
 def get_rel_dist_mat(coords, dist_mat, norm="L2", fill=1):
@@ -101,16 +123,56 @@ def get_rel_dist_mat(coords, dist_mat, norm="L2", fill=1):
 
     assert coords.shape == (len(dist_mat), 2)
     assert dist_mat.shape == (len(dist_mat), len(dist_mat))
-    
+
     # get the normed (default 'L2') distance matrix
     norm_dist_mat = get_normed_dist_mat(coords, norm=norm)
-    
-    dist_mat_rel = np.divide(dist_mat, norm_dist_mat, out=np.ones_like(dist_mat)*fill, where=norm_dist_mat!=0)
+
+    dist_mat_rel = np.divide(dist_mat, norm_dist_mat, out=np.ones_like(dist_mat) * fill, where=norm_dist_mat != 0)
     # dist_mat_rel /= dist_mat_rel.mean() # normalize the mean to 1
     # instead of normalize the mean to 1, we normalize the mean of log(x) to 0
     eps = 1e-10
-    dist_mat_rel /= np.exp(np.log(dist_mat_rel+eps).mean())
-    
+    dist_mat_rel /= np.exp(np.log(dist_mat_rel + eps).mean())
+
+    return dist_mat_rel
+
+
+def get_rel_dist_mat_batch(coords, dist_mat, norm="L2", fill=1):
+    """
+    Batched version of get_rel_dist_mat, using only torch
+
+    args:
+        coords: (I, N, 2) tensor
+        dist_mat: (I, N, N) tensor
+        norm (str): "L1", "L2", "Linf", default = "L2"
+        fill (float): fill the relative distance matrix with this value where face x/0, default = 1 (arbitrary value works)
+
+    returns:
+        dist_mat_rel: (I, N, N) relative distance tensor
+    """
+    assert isinstance(coords, torch.Tensor) and isinstance(dist_mat, torch.Tensor)
+    assert len(coords.shape) == 3
+    (I, N, _) = coords.shape
+    assert dist_mat.shape == (I, N, N)
+
+    # get the normed (default 'L2') distance matrix
+    norm_dist_mat = get_normed_dist_mat_batch(coords, norm=norm)
+    assert norm_dist_mat.shape == dist_mat.shape
+
+    dist_mat_rel = torch.where(
+        norm_dist_mat != 0,
+        torch.divide(dist_mat, norm_dist_mat),
+        fill
+    )
+    assert dist_mat_rel.shape == dist_mat.shape
+
+    # instead of normalize the mean to 1, we normalize the mean of log(x) to 0
+    eps = 1e-10
+    log_mean = torch.mean(torch.log(dist_mat_rel + eps), dim=(1, 2))
+    assert log_mean.shape == (I,)
+    log_mean_rep = log_mean[:, None, None]
+    dist_mat_rel /= torch.exp(log_mean_rep)
+
+    assert dist_mat_rel.shape == (I, N, N)
     return dist_mat_rel
 
 
@@ -121,7 +183,8 @@ def get_normalize_dist_mat(dist_mat):
     assert dist_mat.shape[0] == dist_mat.shape[1]
     l, u = dist_mat.min(), dist_mat.max()
     eps = 1e-3
-    return (dist_mat-l) / max(u-l, eps)
+    return (dist_mat - l) / max(u - l, eps)
+
 
 def get_normalize_dist_mat_batch(dist_mat):
     raise NotImplementedError
@@ -135,7 +198,7 @@ def get_normalize_coords(coords):
     assert coords.shape[1] == 2
     coords_min = coords.min(axis=0)
     coords_max = coords.max(axis=0)
-    scale = coords_max.max() - coords_min.min() 
+    scale = coords_max.max() - coords_min.min()
     # scale is a scalar: must apply the same factor to both x & y, so that the optimal tour is not changed
     coords_normalized = (coords - coords_min) / scale
 
@@ -146,6 +209,7 @@ def get_normalize_coords(coords):
     # FIXME: another case is usually, the [station] is an outlier, large spaces are empty
 
     return coords_normalized
+
 
 def get_normalize_coords_batch(coords):
     raise NotImplementedError
@@ -180,16 +244,16 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
     # (1) sacle along y-axis (stretch coords vertically)
     # (2) actaul_sym_std / sym_std, and (3) actual_asym_std / asym_std
     # that is: we can recover the original data after transformed to our standard distribution with above three parameters
-    
+
     rescale_factors_dim = 3 if non_Euc else 1
     if rescale:
         # sd = 0.5 -> 50% between exp(-0.5) and exp(0.5), i.e., (0.61, 1.65)
-        scale_factors = LogNormal(torch.tensor(0.0), torch.tensor(0.5)).sample(sample_shape=(num_graphs, rescale_factors_dim))
+        scale_factors = LogNormal(torch.tensor(0.0), torch.tensor(0.5)).sample(
+            sample_shape=(num_graphs, rescale_factors_dim))
     else:
-        scale_factors = torch.ones((num_graphs,rescale_factors_dim))
+        scale_factors = torch.ones((num_graphs, rescale_factors_dim))
 
     assert scale_factors.shape == (num_graphs, rescale_factors_dim)
-
 
     # Generate points randomly in unit square according to
     points = Uniform(0, 1).sample(sample_shape=(num_graphs, n, 2))
@@ -201,73 +265,69 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
     if not non_Euc:
         return {"coords": points, "scale_factors": scale_factors}
 
-
-
     # Yi: we decompose the relative matrix into two parts:
     # (1) a symmetric matrix, X1, and (2) a matrix represents the "asymmetry", X2,
     # so, relative matrix X = X1 * (1+X2)
     # further, element in X1 follows a [log-normal] distribution, mu=0, sigma=sym_std(=0.5)
     #       and element in X2 follows a [normal] distribution, mu=0, sigma=asym_std(=0.05)
-    
+
     sym_std = 0.5
     sym_log = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))
-    sym_rel_dist_mat = torch.exp(sym_std*np.sqrt(0.5)* (sym_log + sym_log.permute(0,2,1)))
+    sym_rel_dist_mat = torch.exp(sym_std * np.sqrt(0.5) * (sym_log + sym_log.permute(0, 2, 1)))
 
     asym_std = 0.05
     asym = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))
-    asym_rel_dist_mat = asym_std*np.sqrt(0.5)* (asym - asym.permute(0,2,1))
-    
-    relative_dist_matrix = sym_rel_dist_mat * (1+asym_rel_dist_mat)
+    asym_rel_dist_mat = asym_std * np.sqrt(0.5) * (asym - asym.permute(0, 2, 1))
+
+    relative_dist_matrix = sym_rel_dist_mat * (1 + asym_rel_dist_mat)
     assert relative_dist_matrix.shape == (num_graphs, n, n)
-    
+
     distance_matrix = relative_dist_matrix * euclidean_distance_matrix
 
-    return {"coords": points, "rel_distance": relative_dist_matrix, "distance": distance_matrix, "scale_factors": scale_factors}
+    return {"coords": points, "rel_distance": relative_dist_matrix, "distance": distance_matrix,
+            "scale_factors": scale_factors}
 
 
 def get_random_graph_np(*args, **kwargs):
-    data = get_random_graph(*args, **kwargs)
-    for key in data:
-        data[key] = data[key].numpy()
-    return data
+    return to_np(get_random_graph(*args, **kwargs))
 
 
-def scale_graph(coords, r, dist_mat_rel, sym_std=0.5, asym_std=0.05, recover=False,
-                actual_sym_std=None, actual_asym_std=None):
-    """util function for normalize_graph and recover_graph"""
-    if recover:
-        assert actual_sym_std is not None and actual_asym_std is not None
-        r = 1.0 / r
-    (n, _) = coords.shape
-    if r < 1:
-        rescale_fac = torch.Tensor([1, r])
-    else:
-        rescale_fac = torch.Tensor([r, 1])
+def scale_graph(data, sym_std=0.5, asym_std=0.05):
+    coords = data["coords"]
+    dist_mat = data["distance"]
+    dist_mat_rel = data["rel_distance"]
+    (I, N, _) = dist_mat.shape
 
-    rescale_fac_mat = rescale_fac.repeat((n, 1))
-    assert rescale_fac_mat.shape == (n, 2)
-    coords = coords * rescale_fac_mat
-
-    dist_mat_rel_t = torch.t(dist_mat_rel)
+    eps = 1e-10
+    dist_mat_rel_t = torch.transpose(dist_mat_rel, 1, 2)
     rel_sym = (dist_mat_rel + dist_mat_rel_t) / 2
-    rel_asym = (dist_mat_rel - rel_sym) / rel_sym
+    rel_asym = (dist_mat_rel - rel_sym) / (rel_sym + eps)
 
-    if not recover:
-        actual_sym_std = torch.std(rel_sym)
-        actual_asym_std = torch.std(rel_asym)
-        sym_factor = sym_std / actual_sym_std
-        asym_factor = asym_std / actual_asym_std
-    else:
+    if data["scale_factors"] is not None:
+        r, actual_sym_std, actual_asym_std = data["scale_factors"]
         sym_factor = actual_sym_std / sym_std
         asym_factor = asym_std / actual_asym_std
+        assert sym_factor.shape == (I,)
+    else:
+        coords_min = torch.min(coords, dim=1)[0]
+        coords_max = torch.max(coords, dim=1)[0]
+        assert coords_min.shape == (I, 2)
+        r = ((coords_max[:, 1] - coords_min[:, 1]) / (coords_max[:, 0] - coords_min[:, 0]))
+        assert r.shape == (I,)
+        actual_sym_std = torch.std(rel_sym, dim=(1, 2))
+        actual_asym_std = torch.std(rel_asym, dim=(1, 2))
+        sym_factor = sym_std / actual_sym_std
+        asym_factor = asym_std / actual_asym_std
+        assert sym_factor.shape == (I,)
 
-    rel_sym = torch.exp(sym_factor * torch.log(rel_sym))
-    rel_asym = asym_factor * torch.log(rel_asym)
+    rel_sym = torch.exp(sym_factor[:, None, None] * torch.log(rel_sym))
+    rel_asym = asym_factor[:, None, None] * rel_asym
 
     assert rel_sym.shape == rel_asym.shape == dist_mat_rel.shape
+
     dist_mat_rel = rel_sym * (1 + rel_asym)
     dist_mat = dist_mat_rel * get_euclidean_dist_matrix(coords)
-    scale_factors = torch.Tensor([r, actual_sym_std.item(), actual_asym_std.item()])
+    scale_factors = (r, actual_sym_std, actual_asym_std)
     return {
         "coords": coords,
         "distance": dist_mat,
@@ -276,100 +336,101 @@ def scale_graph(coords, r, dist_mat_rel, sym_std=0.5, asym_std=0.05, recover=Fal
     }
 
 
-# FIXME: doesn't really support batches - should it? I don't think so, based on prior comments (e.g. Euclidean (N, 2)) but not sure
-def normalize_graph(data, rescale=False, i=0):
-    if isinstance(data, dict) and "distance" in data:  # non-Euclidean
-        coords = data["coords"]
-        if isinstance(coords, np.ndarray):
-            coords = torch.from_numpy(coords)
-        if len(coords.shape) == 3: # batch
-            coords = coords[i]
+def normalize_graph(data, rescale=False):
+    """
+    args:
+        data: unified input dict
+            coords: (I, N, 2) torch tensor
+            distance: (I, N, N) tensor
+            rel_distance: (I, N, N) tensor
+            scale_factors: (I, 3) if non_Euc else None?
+    """
 
-        dist_mat = data["distance"]
-        if isinstance(dist_mat, np.ndarray):
-            dist_mat = torch.from_numpy(dist_mat)
-        if len(dist_mat.shape) == 3: # batch
-            dist_mat = dist_mat[i]
+    coords = data["coords"]
+    dist_mat = data["distance"]
 
-        assert coords.shape == (len(coords), 2), coords.shape
-        (n, _) = coords.shape
-        assert dist_mat.shape == (n, n)
-    else:   # Euclidean, (N, 2)
-        coords = data
-        if isinstance(coords, np.ndarray):
-            coords = torch.from_numpy(coords)
-        if len(coords.shape) == 3:
-            coords = coords[i]
-        dist_mat = get_euclidean_dist_matrix(coords)
+    assert len(coords.shape) == 3
+    (I, N, _) = coords.shape
 
+    # scale distance matrix to normalized coords
+    coords_min = torch.min(coords, dim=1)[0]
+    coords_max = torch.max(coords, dim=1)[0]
+    assert coords_min.shape == (I, 2)
 
-    # scale distance matrix to normalized coords, using torch
-    coords_min = torch.min(coords, dim=0)[0]
-    coords_max = torch.max(coords, dim=0)[0]
-    scale = torch.max(coords_max) - torch.min(coords_min)
-    coords = (coords - coords_min) / scale
+    scale = torch.max(coords_max, dim=1)[0] - torch.min(coords_min, dim=1)[0]
+    assert scale.shape == (I,)
 
-    dist_mat = dist_mat / scale
+    coords_min_rep = coords_min[:, None, :]
+    scale_rep = scale[:, None, None]
+    coords = (coords - coords_min_rep) / scale_rep
 
-    dist_mat_rel = torch.from_numpy(get_rel_dist_mat(coords.numpy(), dist_mat.numpy()))
-    rel_norm_scale = torch.exp(torch.sum(torch.log(dist_mat_rel)) / n**2)
-    dist_mat_rel = dist_mat_rel / rel_norm_scale
+    assert coords.shape == (I, N, 2)
 
+    dist_mat = dist_mat / scale_rep
+
+    dist_mat_rel = get_rel_dist_mat_batch(coords, dist_mat)
+
+    # FIXME: I believe the commented code below is actually taken care of in get_rel_dist_mat_batch
+    # rel_norm_scale = torch.exp(torch.sum(torch.log(dist_mat_rel), dim=0) / N**2)
+    # dist_mat_rel = dist_mat_rel / rel_norm_scale
+
+    assert dist_mat_rel.shape == (I, N, N)
+    dist_mat = dist_mat_rel * get_normed_dist_mat_batch(coords)
+    curr_data = {
+        "coords": coords,
+        "distance": dist_mat,
+        "rel_distance": dist_mat_rel,
+        "scale_factors": None
+    }
     if rescale:
-        r = ((coords_max[1] - coords_min[1]) / (coords_max[0] - coords_min[0])).item()
-        return scale_graph(coords, r, dist_mat_rel)
+        return scale_graph(curr_data)
     else:
-        dist_mat = dist_mat_rel * get_euclidean_dist_matrix(coords)
-        return {
-            "coords": coords,
-            "distance": dist_mat,
-            "rel_distance": dist_mat_rel,
-            "scale_factors": None
-        }
+        return curr_data
 
 
 def recover_graph(data, rescale=False):
     """
-    Recovers the true distance matrix of a standardized graph
+    Recovers the true distance matrix of a standardized graph (batched)
     """
     if rescale:
-        coords = data["coords"]
-        assert len(coords.shape) == 2 and coords.shape[1] == 2
-        (r, actual_sym_std, actual_asym_std) = coords["scale_factors"]
-        new_data = scale_graph(
-            coords,
-            r,
-            data["rel_distance"],
-            recover=True,
-            actual_sym_std=actual_sym_std,
-            actual_asym_std=actual_asym_std
-        )
-        return new_data["distance"]
-
+        assert data["scale_factors"] is not None
+        return scale_graph(data)["distance"]
     else:
         return data["distance"]
 
+
+def normalize_graph_np(*args, **kwargs):
+    return to_np(normalize_graph(*args, **kwargs))
+
+
+def recover_graph_np(*args, **kwargs):
+    return to_np(recover_graph(*args, **kwargs))
 
 
 @deprecated
 def tour_len(*args, **kwargs):
     return get_tour_len(*args, **kwargs)
 
+
 @deprecated
 def normed_dist_mat(*args, **kwargs):
     return get_normed_dist_mat(*args, **kwargs)
+
 
 @deprecated
 def normalize_dist_mat(*args, **kwargs):
     return get_normalize_dist_mat(*args, **kwargs)
 
+
 @deprecated
 def rel_dist_mat(*args, **kwargs):
     return get_rel_dist_mat(*args, **kwargs)
 
+
 @deprecated
 def normalize_coords(*args, **kwargs):
     return get_normalize_coords(*args, **kwargs)
+
 
 @deprecated
 def random_graph(*args, **kwargs):
