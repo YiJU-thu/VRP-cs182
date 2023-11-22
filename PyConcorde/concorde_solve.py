@@ -62,7 +62,7 @@ def concorde_atsp_2d(dist_mat, scale=1, big_M=100, inf_M=1e7, tmp_idx="", time_b
     t = perf_counter() - t0
     obj = sol.optimal_value
     route = sol.tour
-    assert not sol.hit_time_bound, f"time bound hit: {time_bound} sec"
+    assert not sol.hit_timebound, f"time bound hit: {time_bound} sec"
 
     route = route%N
     route1 = route[::2]
@@ -94,7 +94,7 @@ def concorde_euc_2d(coords, scale=1, time_bound=-1):
     t = perf_counter() - t0
     obj = sol.optimal_value
     route = sol.tour
-    assert not sol.hit_time_bound, f"time bound hit: {time_bound} sec"
+    assert not sol.hit_timebound, f"time bound hit: {time_bound} sec"
 
     obj_actual = get_tour_len(tour=route, coords=coords, norm="L2")
     # obj_actual should be similar to (obj+big_M*N)/scale
