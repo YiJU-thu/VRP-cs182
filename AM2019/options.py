@@ -31,6 +31,7 @@ def get_options(args=None):
     parser.add_argument('--rank_k_approx', type=int, default=0, help='compute rank k-approx of dist matrix to argument node features')
     parser.add_argument('--n_edge_encode_layer', type=int, default=0, help='add edge matrix encodings to the first n attention layers')
     parser.add_argument('--encode_original_edge', action='store_true', help='if not, encode the relative distance matrix')
+    parser.add_argument('--svd_original_edge', action='store_true', help='if not, do SVD on the relative distance matrix')
     parser.add_argument('--rescale_dist', action='store_true', help='...')
 
     # Training
@@ -79,12 +80,6 @@ def get_options(args=None):
     parser.add_argument('--who', default=None, help='have a signiture for the person submit the run. e.g., YJ')
     parser.add_argument('--no_progress_bar', action='store_true', help='Disable progress bar')
 
-
-    # TODO: add some options for setting non-Euclidean cases & training
-    parser.add_argument('--non_euclidean', action='store_true', help='Use a detailed distance matrix for cost evaluation')
-    # TODO TODO TODO TODO
-    # TODO
-    # TODO
 
 
     opts = parser.parse_args(args)
