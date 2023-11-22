@@ -163,3 +163,7 @@ cython_debug/
 *NoTrack*
 *TEST*
 
+# ignore all file with "slurm" in file name / folder name
+*slurm*
+# ignore all file end with ".out"
+*.out
