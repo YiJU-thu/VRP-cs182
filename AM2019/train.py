@@ -81,16 +81,26 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     if not opts.no_tensorboard:
         tb_logger.log_value('learnrate_pg0', optimizer.param_groups[0]['lr'], step)
 
-    # Generate new training data for each epoch
-    training_dataset = baseline.wrap_dataset(problem.make_dataset(
-        size=opts.graph_size, num_samples=opts.epoch_size, non_Euc=opts.non_Euc, rescale=opts.rescale_dist, distribution=opts.data_distribution))
-    training_dataloader = DataLoader(training_dataset, batch_size=opts.batch_size, num_workers=1)
+    # # Generate new training data for each epoch (FIXME: skipped to avoid memory crash)
+    # training_dataset = baseline.wrap_dataset(problem.make_dataset(
+    #     size=opts.graph_size, num_samples=opts.epoch_size, non_Euc=opts.non_Euc, rescale=opts.rescale_dist, distribution=opts.data_distribution))
+    # training_dataloader = DataLoader(training_dataset, batch_size=opts.batch_size, num_workers=1)
 
     # Put model in train mode!
     model.train()
     set_decode_type(model, "sampling")
 
-    for batch_id, batch in enumerate(tqdm(training_dataloader, disable=opts.no_progress_bar)):
+    # Yi: generate an epoch_size dataset may crash the memory, we skip the dataloader
+    #   and generate a batch_size dataset for each batch
+    n_batches = opts.epoch_size // opts.batch_size
+    for batch_id in range(n_batches):
+        batch_dataset = baseline.wrap_dataset(problem.make_dataset(
+            size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, rescale=opts.rescale_dist, distribution=opts.data_distribution))
+        for batch in tqdm(DataLoader(batch_dataset, batch_size=opts.batch_size), disable=opts.no_progress_bar):
+            break # only need the first batch
+
+
+    # for batch_id, batch in enumerate(tqdm(training_dataloader, disable=opts.no_progress_bar)):
         if not opts.rescale_dist:
             if 'scale_factors' in batch.keys():
                 batch['scale_factors'] = None
