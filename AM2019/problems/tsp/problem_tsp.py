@@ -10,7 +10,7 @@ curr_path = os.path.dirname(__file__)
 utils_vrp_path = os.path.join(curr_path, '..', '..', '..', 'utils_project')
 if utils_vrp_path not in sys.path:
     sys.path.append(utils_vrp_path)
-from utils_vrp import get_random_graph, normalize_graph, get_tour_len_torch
+from utils_vrp import get_random_graph, normalize_graph, recover_graph, get_tour_len_torch
 
 class TSP(object):
 
@@ -65,7 +65,8 @@ class TSP(object):
 
 class TSPDataset(Dataset):
     
-    def __init__(self, filename=None, size=50, num_samples=1000000, offset=0, non_Euc=False, rescale=False, distribution=None):
+    def __init__(self, filename=None, size=50, num_samples=1000000, offset=0, 
+                 non_Euc=False, rand_dist="standard", rescale=False, distribution=None):
         super(TSPDataset, self).__init__()
         self.non_Euc = non_Euc
         self.rescale = rescale
@@ -81,7 +82,14 @@ class TSPDataset(Dataset):
         else:
             # Sample points randomly in [0, 1] square
             # self.data = [torch.FloatTensor(size, 2).uniform_(0, 1) for i in range(num_samples)]
-            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale)
+            assert rand_dist in ["standard", "complex"]
+            if rand_dist == "standard":
+                assert rescale == False
+            rescale_tmp = (rand_dist == "complex")
+            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp)
+            if not rescale:
+                self.data = recover_graph(self.data)
+
 
         self.size = self.data["coords"].shape[0]
 

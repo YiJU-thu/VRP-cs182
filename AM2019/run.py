@@ -167,7 +167,8 @@ def run(opts):
 
     # Start the actual training loop
     val_dataset = problem.make_dataset(
-        size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, non_Euc=opts.non_Euc, rescale=opts.rescale_dist, distribution=opts.data_distribution)
+        size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, 
+        non_Euc=opts.non_Euc, rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution)
 
     if opts.resume:
         epoch_resume = int(os.path.splitext(os.path.split(opts.resume)[-1])[0].split("-")[1])

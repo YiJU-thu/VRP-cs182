@@ -335,9 +335,13 @@ def scale_graph(data, sym_std=0.5, asym_std=0.05):
         mode = "recover"
     
     # scale coords
-    if mode == "recover":
-        r = data["scale_factors"][:,0, None]    # shape = (I,1)
-        coords = coords * torch.cat([torch.ones_like(r), r], dim=1)[:,None,:] # shape = (I,N,2)*(I,1,2)
+    if mode == "recover":   # after recovery, coords are already in [0,1] x [0,1]
+        r = data["scale_factors"][:,0]    # shape = (I)
+        # TODO: combine with the else branch
+        assert r.shape == (I,)
+        r_x = torch.minimum(torch.ones_like(r), 1/r)[:,None]  # shape = (I,1)
+        r_y = torch.minimum(torch.ones_like(r), r)[:,None] # shape = (I,1)
+        coords = coords * torch.cat([r_x, r_y], dim=1)[:,None,:]
     else:
         coords_min = torch.min(coords, dim=1)[0]    # shape = (I,2)
         coords_max = torch.max(coords, dim=1)[0]    # shape = (I,2)

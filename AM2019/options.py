@@ -33,7 +33,7 @@ def get_options(args=None):
     parser.add_argument('--encode_original_edge', action='store_true', help='if not, encode the relative distance matrix')
     parser.add_argument('--svd_original_edge', action='store_true', help='if not, do SVD on the relative distance matrix')
     parser.add_argument('--only_distance', action='store_true', help='if True, do not use coordinates in the model') # compatible with rank_k_approx > 0 & svd_original_edge = True
-    parser.add_argument('--rand_dist', type=str, default='standard', help='"standard" or "complex"')
+    parser.add_argument('--rand_dist', type=str, default='standard', help='"standard" or "complex"') # FIXME: can be combined with data_distribution
     parser.add_argument('--rescale_dist', action='store_true', help='if rand_dist is not standard, whether to rescale it to standard')
 
     # Training
