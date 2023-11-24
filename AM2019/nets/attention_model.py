@@ -109,6 +109,13 @@ class AttentionModel(nn.Module):
             node_dim = 2 * (1-only_distance) + 2 * rank_k_approx  # x, y, u_i_k, v_i_k
             step_context_dim = 2 * embedding_dim  # Embedding of first and last node, "2" here means "first" and "last"
             
+            # if only_distance:
+            if only_distance:
+                assert non_Euc == True, "only_distance is only supported for non-Euclidean input"
+                assert rank_k_approx > 0, "only_distance is not supported for rank_k_approx = 0"
+                assert svd_original_edge == True, "must svd on the original edge matrix if only_distance is True"
+
+
             # Learned input symbols for first action
             self.W_placeholder = nn.Parameter(torch.Tensor(2 * embedding_dim))
             self.W_placeholder.data.uniform_(-1, 1)  # Placeholder should be in range of activations
@@ -269,7 +276,6 @@ class AttentionModel(nn.Module):
         # Yifan TODO: svd and add node features, then go through the linear layer
         coords = input['coords']
         if self.rank_k_approx == 0:
-            assert self.only_distance == False, "only_distance is not supported for rank_k_approx=0"
             nodes = coords
             S = torch.zeros(coords.shape[0], 0, device=coords.device)   # shape (batch_size, 0)
         else:
