@@ -93,7 +93,7 @@ def get_options(args=None):
     opts.use_cuda = torch.cuda.is_available() and not opts.no_cuda
     opts.run_name = "{}_{}".format(opts.run_name, time.strftime("%Y%m%dT%H%M%S"))
     
-    project = "{}{}_{}{}".format("nE_"*(opts.non_Euc), opts.problem, opts.graph_size, "_rS"*(opts.rescale_dist))
+    project = "{}{}_{}{}".format("nE_"*(opts.non_Euc), opts.problem, opts.graph_size, "_rS"*(opts.rand_dist != 'standard'))
     opts.project = project
     opts.save_dir = os.path.join(
         opts.output_dir,
