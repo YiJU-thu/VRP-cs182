@@ -83,7 +83,8 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
 
     # # Generate new training data for each epoch (FIXME: skipped to avoid memory crash)
     # training_dataset = baseline.wrap_dataset(problem.make_dataset(
-    #     size=opts.graph_size, num_samples=opts.epoch_size, non_Euc=opts.non_Euc, rescale=opts.rescale_dist, distribution=opts.data_distribution))
+    #     size=opts.graph_size, num_samples=opts.epoch_size, non_Euc=opts.non_Euc, 
+    #     rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution))
     # training_dataloader = DataLoader(training_dataset, batch_size=opts.batch_size, num_workers=1)
 
     # Put model in train mode!
@@ -95,7 +96,8 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     n_batches = opts.epoch_size // opts.batch_size
     for batch_id in range(n_batches):
         batch_dataset = baseline.wrap_dataset(problem.make_dataset(
-            size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, rescale=opts.rescale_dist, distribution=opts.data_distribution))
+            size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, 
+            rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution))
         for batch in tqdm(DataLoader(batch_dataset, batch_size=opts.batch_size), disable=opts.no_progress_bar):
             break # only need the first batch
 
