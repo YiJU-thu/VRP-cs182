@@ -48,6 +48,7 @@ class AttentionModel(nn.Module):
                  non_Euc=False,
                  rank_k_approx=0, # Yifan: add node features
                  svd_original_edge=False,
+                 only_distance=False,
                  rescale_dist=False,
                  n_encode_layers=2,
                  tanh_clipping=10.,
@@ -82,6 +83,7 @@ class AttentionModel(nn.Module):
         self.non_Euc = non_Euc
         self.rank_k_approx = rank_k_approx
         self.svd_original_edge = svd_original_edge
+        self.only_distance = only_distance
         self.rescale_dist = rescale_dist
         
         assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
@@ -104,7 +106,7 @@ class AttentionModel(nn.Module):
         else:  # TSP
             assert problem.NAME == "tsp", "Unsupported problem: {}".format(problem.NAME)
             # Yifan: add node features
-            node_dim = 2 + 2 * rank_k_approx  # x, y, u_i_k, v_i_k
+            node_dim = 2 * (1-only_distance) + 2 * rank_k_approx  # x, y, u_i_k, v_i_k
             step_context_dim = 2 * embedding_dim  # Embedding of first and last node, "2" here means "first" and "last"
             
             # Learned input symbols for first action
@@ -150,6 +152,7 @@ class AttentionModel(nn.Module):
         I, N, _ = input['coords'].shape
         if not self.non_Euc: # input is Euclidean
             assert self.rank_k_approx == 0, "rank_k_approx is not supported for Euclidean input"
+            assert self.only_distance == False, "only_distance is not supported for Euclidean input"
             scale_factors_dim = 1
         else: # non-Euclidean
             assert "rel_distance" in input, "Input must contain 'rel_distance' key"
@@ -266,14 +269,18 @@ class AttentionModel(nn.Module):
         # Yifan TODO: svd and add node features, then go through the linear layer
         coords = input['coords']
         if self.rank_k_approx == 0:
+            assert self.only_distance == False, "only_distance is not supported for rank_k_approx=0"
             nodes = coords
             S = torch.zeros(coords.shape[0], 0, device=coords.device)   # shape (batch_size, 0)
         else:
             mat_to_svd = input['distance'] if self.svd_original_edge else input['rel_distance']
             U, S, V = torch.linalg.svd(mat_to_svd)
-            nodes = torch.cat([coords, U[..., :self.rank_k_approx], V[..., :self.rank_k_approx]], dim=2)
+            if self.only_distance:
+                nodes = torch.cat([U[..., :self.rank_k_approx], V[..., :self.rank_k_approx]], dim=2)
+            else:
+                nodes = torch.cat([coords, U[..., :self.rank_k_approx], V[..., :self.rank_k_approx]], dim=2)
             S = S[..., :self.rank_k_approx]
-        assert nodes.shape == (coords.shape[0], coords.shape[1], 2 + 2 * self.rank_k_approx)
+        assert nodes.shape == (coords.shape[0], coords.shape[1], 2*(1-self.only_distance) + 2 * self.rank_k_approx)
         return self.init_embed(nodes), S
 
     def _inner(self, input, embeddings):

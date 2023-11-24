@@ -27,7 +27,7 @@ API_KEY = os.environ.get("WANDB_API_KEY")
 def run(opts):
     project = opts.project
     # nE = non-Euclidean, rS=rescale_dist
-    logger.add(f"{project}.log", rotation="10 MB")
+    logger.add(f"logs/{project}.log", rotation="10 MB")
 
     # Pretty print the run args
     pp.pprint(vars(opts))
@@ -87,7 +87,8 @@ def run(opts):
         non_Euc=opts.non_Euc,
         rank_k_approx=opts.rank_k_approx,
         rescale_dist=opts.rescale_dist,
-        svd_original_edge=opts.svd_original_edge, 
+        svd_original_edge=opts.svd_original_edge,
+        only_distance=opts.only_distance, 
         n_encode_layers=opts.n_encode_layers,
         mask_inner=True,
         mask_logits=True,
