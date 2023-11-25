@@ -2,9 +2,10 @@ import torch
 from loguru import logger
 
 # modified from the code provided by ChatGPT
-def randomized_svd_batch(A_batch, k, num_iterations=5):
+def randomized_svd_batch(A_batch, k, p=5, num_iterations=1):
     """
     Compute the first k singular values of a batch of matrices using randomized SVD.
+    I change this based on alg.2 in https://gregorygundersen.com/blog/2019/01/17/randomized-svd/
 
     Parameters:
     - A_batch: torch.Tensor, input batch of matrices with dimensions (batch_size, m, n)
@@ -16,12 +17,13 @@ def randomized_svd_batch(A_batch, k, num_iterations=5):
     - S_batch: torch.Tensor, singular values for each matrix in the batch
     - V_batch: torch.Tensor, right singular vectors for each matrix in the batch
     """
+    device = A_batch.device
     batch_size, m, n = A_batch.shape
     # logger.debug(f"A_batch max: {torch.max(A_batch)}, min: {torch.min(A_batch)}")
-    sketch_size = min(2 * k, n)  # Adjust sketch size based on problem size
+    sketch_size = min(k+p, n)  # Adjust sketch size based on problem size
 
     # Generate a random Gaussian matrix for each matrix in the batch
-    Omega_batch = torch.randn((batch_size, n, sketch_size))
+    Omega_batch = torch.randn((batch_size, n, sketch_size), device=device)
 
     # Form the sketched matrices for each matrix in the batch
     Y_batch = torch.matmul(A_batch, Omega_batch)
