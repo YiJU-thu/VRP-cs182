@@ -88,6 +88,7 @@ def run(opts):
         rank_k_approx=opts.rank_k_approx,
         rescale_dist=opts.rescale_dist,
         svd_original_edge=opts.svd_original_edge,
+        mul_sigma_uv=opts.mul_sigma_uv,
         full_svd=opts.full_svd,
         only_distance=opts.only_distance, 
         n_encode_layers=opts.n_encode_layers,
