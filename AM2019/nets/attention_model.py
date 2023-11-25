@@ -280,7 +280,7 @@ class AttentionModel(nn.Module):
         coords = input['coords']
         if self.rank_k_approx == 0:
             nodes = coords
-            S = torch.zeros(coords.shape[0], 0, device=coords.device)   # shape (batch_size, 0)
+            Sk = torch.zeros(coords.shape[0], 0, device=coords.device)   # shape (batch_size, 0)
         else:
             mat_to_svd = input['distance'] if self.svd_original_edge else input['rel_distance']
 
