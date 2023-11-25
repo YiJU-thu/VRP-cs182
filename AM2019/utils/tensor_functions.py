@@ -6,6 +6,7 @@ def randomized_svd_batch(A_batch, k, p=5, num_iterations=1):
     """
     Compute the first k singular values of a batch of matrices using randomized SVD.
     I change this based on alg.2 in https://gregorygundersen.com/blog/2019/01/17/randomized-svd/
+    Actually based on paper: https://arxiv.org/pdf/0909.4061.pdf
 
     Parameters:
     - A_batch: torch.Tensor, input batch of matrices with dimensions (batch_size, m, n)
