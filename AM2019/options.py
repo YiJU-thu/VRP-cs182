@@ -32,7 +32,9 @@ def get_options(args=None):
     parser.add_argument('--n_edge_encode_layer', type=int, default=0, help='add edge matrix encodings to the first n attention layers')
     parser.add_argument('--encode_original_edge', action='store_true', help='if not, encode the relative distance matrix')
     parser.add_argument('--svd_original_edge', action='store_true', help='if not, do SVD on the relative distance matrix')
-    parser.add_argument('--rescale_dist', action='store_true', help='...')
+    parser.add_argument('--only_distance', action='store_true', help='if True, do not use coordinates in the model') # compatible with rank_k_approx > 0 & svd_original_edge = True
+    parser.add_argument('--rand_dist', type=str, default='standard', help='"standard" or "complex"') # FIXME: can be combined with data_distribution
+    parser.add_argument('--rescale_dist', action='store_true', help='if rand_dist is not standard, whether to rescale it to standard')
 
     # Training
     parser.add_argument('--lr_model', type=float, default=1e-4, help="Set the learning rate for the actor network")
@@ -81,12 +83,6 @@ def get_options(args=None):
     parser.add_argument('--no_progress_bar', action='store_true', help='Disable progress bar')
 
 
-    # TODO: add some options for setting non-Euclidean cases & training
-    parser.add_argument('--non_euclidean', action='store_true', help='Use a detailed distance matrix for cost evaluation')
-    # TODO TODO TODO TODO
-    # TODO
-    # TODO
-
 
     opts = parser.parse_args(args)
 
@@ -96,9 +92,12 @@ def get_options(args=None):
 
     opts.use_cuda = torch.cuda.is_available() and not opts.no_cuda
     opts.run_name = "{}_{}".format(opts.run_name, time.strftime("%Y%m%dT%H%M%S"))
+    
+    project = "{}{}_{}{}".format("nE_"*(opts.non_Euc), opts.problem, opts.graph_size, "_rS"*(opts.rand_dist != 'standard'))
+    opts.project = project
     opts.save_dir = os.path.join(
         opts.output_dir,
-        "{}_{}".format(opts.problem, opts.graph_size),
+        project,
         opts.run_name
     )
     if opts.bl_warmup_epochs is None:

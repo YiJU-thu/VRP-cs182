@@ -209,7 +209,9 @@ class GraphAttentionEncoder(nn.Module):
         self.non_Euc = non_Euc
 
         if rescale_dist:
-            scale_factors_dim = 3 if non_Euc else 1        
+            scale_factors_dim = 3 if non_Euc else 1
+        else:
+            scale_factors_dim = 0        
         graph_embed_layers = 3  # TODO: make this a parameter
         add_graph_dim = rank_k_approx + scale_factors_dim
         self.graph_embed = MLP(embed_dim+add_graph_dim, [embed_dim for _ in range(graph_embed_layers)])

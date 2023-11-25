@@ -16,17 +16,23 @@ from nets.attention_model import AttentionModel
 from nets.pointer_network import PointerNetwork, CriticNetworkLSTM
 from utils import torch_load_cpu, load_problem
 
+from loguru import logger
 
 import wandb
 API_KEY = os.environ.get("WANDB_API_KEY")
 # you should set WANDB_API_KEY in your environment before running this script
 # using the command: export WANDB_API_KEY=<your_api_key_here>
 
-
+@logger.catch
 def run(opts):
+    project = opts.project
+    # nE = non-Euclidean, rS=rescale_dist
+    logger.add(f"logs/{project}.log", rotation="10 MB")
 
     # Pretty print the run args
     pp.pprint(vars(opts))
+    logger.info(f"Project: {project}")
+    logger.info(vars(opts))
 
     # Set the random seed
     torch.manual_seed(opts.seed)
@@ -47,7 +53,7 @@ def run(opts):
         wandb.login(key=API_KEY)
         wandb_logger = wandb.init(
             entity=opts.wandb_entity,   # a username, or a team name
-            project=f"nE_{opts.problem}_{opts.graph_size}",     # nE = non-Euclidean
+            project=project,     
             name=opts.run_name, 
             config=vars(opts))
     else:
@@ -81,7 +87,8 @@ def run(opts):
         non_Euc=opts.non_Euc,
         rank_k_approx=opts.rank_k_approx,
         rescale_dist=opts.rescale_dist,
-        svd_original_edge=opts.svd_original_edge, 
+        svd_original_edge=opts.svd_original_edge,
+        only_distance=opts.only_distance, 
         n_encode_layers=opts.n_encode_layers,
         mask_inner=True,
         mask_logits=True,
@@ -160,7 +167,8 @@ def run(opts):
 
     # Start the actual training loop
     val_dataset = problem.make_dataset(
-        size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, distribution=opts.data_distribution)
+        size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, 
+        non_Euc=opts.non_Euc, rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution)
 
     if opts.resume:
         epoch_resume = int(os.path.splitext(os.path.split(opts.resume)[-1])[0].split("-")[1])
