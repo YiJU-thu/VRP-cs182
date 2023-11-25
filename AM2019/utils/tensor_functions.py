@@ -1,5 +1,45 @@
 import torch
 
+# modified from the code provided by ChatGPT
+def randomized_svd_batch(A_batch, k, num_iterations=5):
+    """
+    Compute the first k singular values of a batch of matrices using randomized SVD.
+
+    Parameters:
+    - A_batch: torch.Tensor, input batch of matrices with dimensions (batch_size, m, n)
+    - k: int, number of singular values to compute
+    - num_iterations: int, number of iterations for power iteration
+
+    Returns:
+    - U_batch: torch.Tensor, left singular vectors for each matrix in the batch
+    - S_batch: torch.Tensor, singular values for each matrix in the batch
+    - V_batch: torch.Tensor, right singular vectors for each matrix in the batch
+    """
+    batch_size, m, n = A_batch.shape
+    sketch_size = min(2 * k, n)  # Adjust sketch size based on problem size
+
+    # Generate a random Gaussian matrix for each matrix in the batch
+    Omega_batch = torch.randn((batch_size, n, sketch_size))
+
+    # Form the sketched matrices for each matrix in the batch
+    Y_batch = torch.matmul(A_batch, Omega_batch)
+
+    # Perform power iteration for each matrix in the batch
+    for _ in range(num_iterations):
+        Y_batch = torch.matmul(A_batch, torch.matmul(A_batch.transpose(1, 2), Y_batch))
+
+    # QR decomposition of the sketched matrices for each matrix in the batch
+    Q_batch, _ = torch.linalg.qr(Y_batch)
+
+    # Compute the SVD of the sketched matrices for each matrix in the batch
+    B_batch = torch.matmul(Q_batch.transpose(1, 2), A_batch)
+    U_batch, S_batch, Vt_batch = torch.linalg.svd(B_batch)
+    V_batch = Vt_batch.transpose(1, 2)
+
+    # Return the first k singular values and vectors for each matrix in the batch
+    return U_batch[:, :, :k], S_batch[:, :k], V_batch[:, :, :k]
+
+
 
 def compute_in_batches(f, calc_batch_size, *args, n=None):
     """
