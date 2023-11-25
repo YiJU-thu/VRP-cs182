@@ -181,6 +181,18 @@ class MultiHeadAttentionLayer(nn.Sequential):
         )
 
 
+class MLP(torch.nn.Module):
+    def __init__(self,n_feature,n_hidden,n_output):
+        super(Net,self).__init__()
+        self.hidden = torch.nn.Linear(n_feature,n_hidden)
+        self.predict = torch.nn.Linear(n_hidden,n_output)
+ 
+    def forward(self,x):
+        x = F.relu(self.hidden(x))
+        x = self.predict(x)
+        return x
+
+
 class GraphAttentionEncoder(nn.Module):
     def __init__(
             self,
@@ -216,9 +228,16 @@ class GraphAttentionEncoder(nn.Module):
         add_graph_dim = rank_k_approx + scale_factors_dim
         self.graph_embed = MLP(embed_dim+add_graph_dim, [embed_dim for _ in range(graph_embed_layers)])
 
-    def forward(self, x, S, scale_factors=None, mask=None):
+    def forward(self, x, S, scale_factors=None, mask=None, edge_matrix=None):
 
         assert mask is None, "TODO mask not yet supported!"
+        
+        if edge_matrix is not None:
+            I, N, _ = edge_matrix.size()
+            edge_matrix_flat = edge_matrix.view(-1, 1)  
+            mlp = MLP(input_dim=1, output_dim=self.n_heads) 
+            edge_matrix_processed = mlp(edge_matrix_flat) 
+            edge_matrix_processed = edge_matrix_processed.view(I, N, N, self.n_heads)
 
         # Yifan TODO: rewrite this part to add singular values of the distance matrix to the graph embedding
         
