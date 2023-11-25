@@ -49,6 +49,7 @@ class AttentionModel(nn.Module):
                  non_Euc=False,
                  rank_k_approx=0, # Yifan: add node features
                  svd_original_edge=False,
+                 full_svd=False,
                  only_distance=False,
                  rescale_dist=False,
                  n_encode_layers=2,
@@ -84,6 +85,7 @@ class AttentionModel(nn.Module):
         self.non_Euc = non_Euc
         self.rank_k_approx = rank_k_approx
         self.svd_original_edge = svd_original_edge
+        self.full_svd = full_svd
         self.only_distance = only_distance
         self.rescale_dist = rescale_dist
         
@@ -282,14 +284,17 @@ class AttentionModel(nn.Module):
         else:
             mat_to_svd = input['distance'] if self.svd_original_edge else input['rel_distance']
 
-            U, S, Vh = torch.linalg.svd(mat_to_svd)
-            V = Vh.mH
-            if self.only_distance:
-                nodes = torch.cat([U[..., :self.rank_k_approx], V[..., :self.rank_k_approx]], dim=2)
+            if self.full_svd:
+                U, S, Vh = torch.linalg.svd(mat_to_svd)
+                V = Vh.mH
+                Uk, Sk, Vk = U[..., :self.rank_k_approx], S[..., :self.rank_k_approx], V[..., :self.rank_k_approx]
             else:
-                nodes = torch.cat([coords, U[..., :self.rank_k_approx], V[..., :self.rank_k_approx]], dim=2)
-            # Uk, Sk, Vk = randomized_svd_batch(mat_to_svd, self.rank_k_approx)
-            Sk = S[..., :self.rank_k_approx]
+                Uk, Sk, Vk = randomized_svd_batch(mat_to_svd, self.rank_k_approx)
+            if self.only_distance:
+                nodes = torch.cat([Uk, Vk], dim=2)
+            else:
+                nodes = torch.cat([coords, Uk, Vk], dim=2)
+            
         assert nodes.shape == (coords.shape[0], coords.shape[1], 2*(1-self.only_distance) + 2 * self.rank_k_approx)
         return self.init_embed(nodes), Sk
 
