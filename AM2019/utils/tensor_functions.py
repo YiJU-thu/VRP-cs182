@@ -2,7 +2,7 @@ import torch
 from loguru import logger
 
 # modified from the code provided by ChatGPT
-def randomized_svd_batch(A_batch, k, p=5, num_iterations=1):
+def randomized_svd_batch(A_batch, k, p=5, num_iterations=2):
     """
     Compute the first k singular values of a batch of matrices using randomized SVD.
     I change this based on alg.2 in https://gregorygundersen.com/blog/2019/01/17/randomized-svd/
@@ -41,7 +41,7 @@ def randomized_svd_batch(A_batch, k, p=5, num_iterations=1):
     # Compute the SVD of the sketched matrices for each matrix in the batch
     B_batch = torch.matmul(Q_batch.transpose(1, 2), A_batch)
     # logger.debug(f"B_batch max: {torch.max(B_batch)}, min: {torch.min(B_batch)}")
-    big_M = 1e4 # FIXME
+    big_M = 1e6 # FIXME
     B_batch = torch.clamp(B_batch, -big_M, big_M)
 
     U_batch, S_batch, Vt_batch = torch.linalg.svd(B_batch)

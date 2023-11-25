@@ -11,6 +11,7 @@ from utils.beam_search import CachedLookup
 from utils.functions import sample_many
 from utils.tensor_functions import randomized_svd_batch
 
+from loguru import logger
 
 def set_decode_type(model, decode_type):
     if isinstance(model, DataParallel):
@@ -49,6 +50,7 @@ class AttentionModel(nn.Module):
                  non_Euc=False,
                  rank_k_approx=0, # Yifan: add node features
                  svd_original_edge=False,
+                 mul_sigma_uv=False,
                  full_svd=False,
                  only_distance=False,
                  rescale_dist=False,
@@ -85,6 +87,7 @@ class AttentionModel(nn.Module):
         self.non_Euc = non_Euc
         self.rank_k_approx = rank_k_approx
         self.svd_original_edge = svd_original_edge
+        self.mul_sigma_uv = mul_sigma_uv
         self.full_svd = full_svd
         self.only_distance = only_distance
         self.rescale_dist = rescale_dist
@@ -289,7 +292,22 @@ class AttentionModel(nn.Module):
                 V = Vh.mH
                 Uk, Sk, Vk = U[..., :self.rank_k_approx], S[..., :self.rank_k_approx], V[..., :self.rank_k_approx]
             else:
-                Uk, Sk, Vk = randomized_svd_batch(mat_to_svd, self.rank_k_approx)
+                try: # avoid ill-conditioned matrix, not converge, etc...
+                    Uk, Sk, Vk = randomized_svd_batch(mat_to_svd, self.rank_k_approx)
+                except Exception as e:
+                    logger.warning("randomized_svd_batch failed, using full svd instead")
+                    logger.warning(e)
+                    U, S, Vh = torch.linalg.svd(mat_to_svd)
+                    V = Vh.mH
+                    Uk, Sk, Vk = U[..., :self.rank_k_approx], S[..., :self.rank_k_approx], V[..., :self.rank_k_approx]
+            
+            # multiply sigma to U and V
+            if self.mul_sigma_uv:
+                sqrt_S = torch.sqrt(Sk[:, None, :])
+                Uk, Vk = Uk * sqrt_S, Vk * sqrt_S
+
+            
+            
             if self.only_distance:
                 nodes = torch.cat([Uk, Vk], dim=2)
             else:
