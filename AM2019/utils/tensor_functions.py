@@ -1,4 +1,5 @@
 import torch
+from loguru import logger
 
 # modified from the code provided by ChatGPT
 def randomized_svd_batch(A_batch, k, num_iterations=5):
@@ -16,6 +17,7 @@ def randomized_svd_batch(A_batch, k, num_iterations=5):
     - V_batch: torch.Tensor, right singular vectors for each matrix in the batch
     """
     batch_size, m, n = A_batch.shape
+    # logger.debug(f"A_batch max: {torch.max(A_batch)}, min: {torch.min(A_batch)}")
     sketch_size = min(2 * k, n)  # Adjust sketch size based on problem size
 
     # Generate a random Gaussian matrix for each matrix in the batch
@@ -28,13 +30,20 @@ def randomized_svd_batch(A_batch, k, num_iterations=5):
     for _ in range(num_iterations):
         Y_batch = torch.matmul(A_batch, torch.matmul(A_batch.transpose(1, 2), Y_batch))
 
+    # logger.debug(f"Y_batch max: {torch.max(Y_batch)}, min: {torch.min(Y_batch)}")
     # QR decomposition of the sketched matrices for each matrix in the batch
     Q_batch, _ = torch.linalg.qr(Y_batch)
+    # logger.debug(f"Q_batch max: {torch.max(Q_batch)}, min: {torch.min(Q_batch)}")
 
     # Compute the SVD of the sketched matrices for each matrix in the batch
     B_batch = torch.matmul(Q_batch.transpose(1, 2), A_batch)
+    # logger.debug(f"B_batch max: {torch.max(B_batch)}, min: {torch.min(B_batch)}")
+    big_M = 1e4 # FIXME
+    B_batch = torch.clamp(B_batch, -big_M, big_M)
+
     U_batch, S_batch, Vt_batch = torch.linalg.svd(B_batch)
     V_batch = Vt_batch.transpose(1, 2)
+    U_batch = torch.matmul(Q_batch, U_batch)
 
     # Return the first k singular values and vectors for each matrix in the batch
     return U_batch[:, :, :k], S_batch[:, :k], V_batch[:, :, :k]
