@@ -9,6 +9,7 @@ from nets.graph_encoder import GraphAttentionEncoder
 from torch.nn import DataParallel
 from utils.beam_search import CachedLookup
 from utils.functions import sample_many
+from utils.tensor_functions import randomized_svd_batch
 
 
 def set_decode_type(model, decode_type):
@@ -270,11 +271,17 @@ class AttentionModel(nn.Module):
             S = torch.zeros(coords.shape[0], 0, device=coords.device)   # shape (batch_size, 0)
         else:
             mat_to_svd = input['distance'] if self.svd_original_edge else input['rel_distance']
-            U, S, V = torch.linalg.svd(mat_to_svd)
+
+            U, S, Vt = torch.linalg.svd(mat_to_svd)
+            V = Vt.T
+            Sk = S[..., :self.rank_k_approx]
             nodes = torch.cat([coords, U[..., :self.rank_k_approx], V[..., :self.rank_k_approx]])
-            S = S[..., :self.rank_k_approx]
+            
+            # Uk, Sk, Vk = randomized_svd_batch(mat_to_svd, self.rank_k_approx)
+            # nodes = torch.cat([coords, Uk, Vk])
+
         assert nodes.shape == (coords.shape[0], coords.shape[1], 2 + 2 * self.rank_k_approx)
-        return self.init_embed(nodes), S
+        return self.init_embed(nodes), Sk
 
     def _inner(self, input, embeddings):
 
