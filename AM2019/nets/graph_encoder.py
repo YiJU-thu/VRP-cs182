@@ -4,6 +4,8 @@ from torch import nn
 from torchvision.ops import MLP
 import math
 
+from loguru import logger
+
 
 class SkipConnection(nn.Module):
 
@@ -12,7 +14,11 @@ class SkipConnection(nn.Module):
         self.module = module
 
     def forward(self, input):
-        return input + self.module(input)
+        if isinstance(input, tuple):
+            input, kwargs = input
+        else:
+            kwargs = {}
+        return input + self.module(input, **kwargs)
 
 
 class MultiHeadAttention(nn.Module):
@@ -22,7 +28,8 @@ class MultiHeadAttention(nn.Module):
             input_dim,
             embed_dim,
             val_dim=None,
-            key_dim=None
+            key_dim=None,
+            encode_edge_matrix=False
     ):
         super(MultiHeadAttention, self).__init__()
 
@@ -45,6 +52,13 @@ class MultiHeadAttention(nn.Module):
 
         self.W_out = nn.Parameter(torch.Tensor(n_heads, val_dim, embed_dim))
 
+        self.encode_edge_matrix = encode_edge_matrix
+        if encode_edge_matrix:
+            # FIXME: this MLP structure is arbitrarily chosen
+            self.edge_mlp = MLP(1, [16, 16, n_heads])
+        else:
+            self.edge_mlp = None
+
         self.init_parameters()
 
     def init_parameters(self):
@@ -53,7 +67,7 @@ class MultiHeadAttention(nn.Module):
             stdv = 1. / math.sqrt(param.size(-1))
             param.data.uniform_(-stdv, stdv)
 
-    def forward(self, q, h=None, mask=None):
+    def forward(self, q, h=None, mask=None, edge_matrix=None):
         """
 
         :param q: queries (batch_size, n_query, input_dim)
@@ -87,6 +101,16 @@ class MultiHeadAttention(nn.Module):
 
         # Calculate compatibility (n_heads, batch_size, n_query, graph_size)
         compatibility = self.norm_factor * torch.matmul(Q, K.transpose(2, 3))
+
+        # TODO: add edge matrix encodings here
+        if self.encode_edge_matrix:
+            I, N, _ = edge_matrix.size()
+            edge_matrix_flat = edge_matrix.view(-1, 1)  
+            edge_matrix_processed = self.edge_mlp(edge_matrix_flat) 
+            edge_matrix_processed = edge_matrix_processed.view(I, N, N, self.n_heads).permute(3, 0, 1, 2)
+            assert edge_matrix_processed.size() == compatibility.size(), f"{edge_matrix_processed.size()} != {compatibility.size()}"
+            compatibility = compatibility + edge_matrix_processed
+
 
         # Optionally apply mask to prevent attention
         if mask is not None:
@@ -158,6 +182,7 @@ class MultiHeadAttentionLayer(nn.Sequential):
             self,
             n_heads,
             embed_dim,
+            encode_edge_matrix=False,
             feed_forward_hidden=512,
             normalization='batch',
     ):
@@ -166,7 +191,8 @@ class MultiHeadAttentionLayer(nn.Sequential):
                 MultiHeadAttention(
                     n_heads,
                     input_dim=embed_dim,
-                    embed_dim=embed_dim
+                    embed_dim=embed_dim,
+                    encode_edge_matrix=encode_edge_matrix
                 )
             ),
             Normalization(embed_dim, normalization),
@@ -179,18 +205,8 @@ class MultiHeadAttentionLayer(nn.Sequential):
             ),
             Normalization(embed_dim, normalization)
         )
+    
 
-
-class MLP(torch.nn.Module):
-    def __init__(self,n_feature,n_hidden,n_output):
-        super(Net,self).__init__()
-        self.hidden = torch.nn.Linear(n_feature,n_hidden)
-        self.predict = torch.nn.Linear(n_hidden,n_output)
- 
-    def forward(self,x):
-        x = F.relu(self.hidden(x))
-        x = self.predict(x)
-        return x
 
 
 class GraphAttentionEncoder(nn.Module):
@@ -201,6 +217,7 @@ class GraphAttentionEncoder(nn.Module):
             n_layers,
             non_Euc=False,
             rank_k_approx=0,
+            n_edge_encode_layers=0,
             rescale_dist=False,
             node_dim=None,
             normalization='batch',
@@ -210,10 +227,11 @@ class GraphAttentionEncoder(nn.Module):
 
         # To map input to embedding space
         self.init_embed = nn.Linear(node_dim, embed_dim) if node_dim is not None else None
-
+        
         self.layers = nn.Sequential(*(
-            MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden, normalization)
-            for _ in range(n_layers)
+            MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden=feed_forward_hidden, 
+                                    normalization=normalization, encode_edge_matrix=(i < n_edge_encode_layers))
+            for i in range(n_layers)
         ))
 
         self.rescale_dist = rescale_dist
@@ -231,20 +249,14 @@ class GraphAttentionEncoder(nn.Module):
     def forward(self, x, S, scale_factors=None, mask=None, edge_matrix=None):
 
         assert mask is None, "TODO mask not yet supported!"
-        
-        if edge_matrix is not None:
-            I, N, _ = edge_matrix.size()
-            edge_matrix_flat = edge_matrix.view(-1, 1)  
-            mlp = MLP(input_dim=1, output_dim=self.n_heads) 
-            edge_matrix_processed = mlp(edge_matrix_flat) 
-            edge_matrix_processed = edge_matrix_processed.view(I, N, N, self.n_heads)
 
         # Yifan TODO: rewrite this part to add singular values of the distance matrix to the graph embedding
         
         # Batch multiply to get initial embeddings of nodes
         h = self.init_embed(x.view(-1, x.size(-1))).view(*x.size()[:2], -1) if self.init_embed is not None else x
 
-        h = self.layers(h)
+        # FIXME: it's wired to pass this in order to avoid a Sequential forward error
+        h = self.layers((h, {"edge_matrix":edge_matrix}))
 
         # the embedding of the graph is the concatenation of the average of h, the first k singular values
         # (and scale_dist if rescale_dist is True) going through a linear layer
