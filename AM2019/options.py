@@ -29,7 +29,7 @@ def get_options(args=None):
                              'Set to 0 to not perform any clipping.')
     parser.add_argument('--normalization', default='batch', help="Normalization type, 'batch' (default) or 'instance'")
     parser.add_argument('--rank_k_approx', type=int, default=0, help='compute rank k-approx of dist matrix to argument node features')
-    parser.add_argument('--n_edge_encode_layer', type=int, default=0, help='add edge matrix encodings to the first n attention layers')
+    parser.add_argument('--n_edge_encode_layers', type=int, default=0, help='add edge matrix encodings to the first n attention layers')
     parser.add_argument('--encode_original_edge', action='store_true', help='if not, encode the relative distance matrix')
     parser.add_argument('--svd_original_edge', action='store_true', help='if not, do SVD on the relative distance matrix')
     parser.add_argument('--full_svd', action='store_true', help='if not, use randomized algorithm to perform faster SVD')

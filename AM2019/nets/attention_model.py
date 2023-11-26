@@ -53,6 +53,8 @@ class AttentionModel(nn.Module):
                  mul_sigma_uv=False,
                  full_svd=False,
                  only_distance=False,
+                 n_edge_encode_layers=0,
+                 encode_original_edge=False,
                  rescale_dist=False,
                  n_encode_layers=2,
                  tanh_clipping=10.,
@@ -85,11 +87,15 @@ class AttentionModel(nn.Module):
         self.shrink_size = shrink_size
 
         self.non_Euc = non_Euc
+        # idea 1: node feature augmentation
         self.rank_k_approx = rank_k_approx
         self.svd_original_edge = svd_original_edge
         self.mul_sigma_uv = mul_sigma_uv
         self.full_svd = full_svd
         self.only_distance = only_distance
+        # idea 2: edge feature encoding
+        self.n_edge_encode_layers = n_edge_encode_layers
+        self.encode_original_edge = encode_original_edge
         self.rescale_dist = rescale_dist
         
         assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
@@ -121,6 +127,12 @@ class AttentionModel(nn.Module):
                 assert rank_k_approx > 0, "only_distance is not supported for rank_k_approx = 0"
                 assert svd_original_edge == True, "must svd on the original edge matrix if only_distance is True"
 
+            assert n_edge_encode_layers <= n_encode_layers, "n_edge_encode_layer must be <= n_encode_layers"
+            if n_edge_encode_layers > 0:
+                assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
+                assert n_edge_encode_layers == 1, "Now only support edge encoding at the first layer" # FIXME
+            if encode_original_edge:
+                assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
 
             # Learned input symbols for first action
             self.W_placeholder = nn.Parameter(torch.Tensor(2 * embedding_dim))
@@ -133,7 +145,8 @@ class AttentionModel(nn.Module):
             embed_dim=embedding_dim,
             n_layers=self.n_encode_layers,
             non_Euc=non_Euc,
-            rank_k_approx=rank_k_approx, 
+            rank_k_approx=rank_k_approx,
+            n_edge_encode_layers=n_edge_encode_layers, 
             normalization=normalization,
             rescale_dist=rescale_dist
         )
@@ -187,10 +200,15 @@ class AttentionModel(nn.Module):
             # init_embed: (batch_size, graph_size, embedding_dim) - h^0_i's
             # S: (batch_size, graph_size, rank_k_approx) - first k singular values of the (rel) distance matrix
             init_embed, S = self._init_embed(input)
-            if self.rescale_dist:
-                embeddings, _ = self.embedder(init_embed, S, scale_factors=input['scale_factors'])
+            
+            if self.n_edge_encode_layers > 0:
+                edge_matrix = input['distance'] if self.encode_original_edge else input['rel_distance']
             else:
-                embeddings, _ = self.embedder(init_embed, S)
+                edge_matrix = None
+            
+            scale_factors = None if not self.rescale_dist else input['scale_factors']
+            
+            embeddings, _ = self.embedder(init_embed, S, scale_factors=input['scale_factors'], edge_matrix=edge_matrix)
 
         _log_p, pi = self._inner(input, embeddings)
 
