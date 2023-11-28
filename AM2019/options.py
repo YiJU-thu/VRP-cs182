@@ -2,6 +2,7 @@ import os
 import time
 import argparse
 import torch
+from utils.functions import parse_softmax_temperature
 
 
 def get_options(args=None):
@@ -106,4 +107,43 @@ def get_options(args=None):
         opts.bl_warmup_epochs = 1 if opts.baseline == 'rollout' else 0
     assert (opts.bl_warmup_epochs == 0) or (opts.baseline == 'rollout')
     assert opts.epoch_size % opts.batch_size == 0, "Epoch size must be integer multiple of batch size!"
+    return opts
+
+
+def get_eval_options(args=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--datasets", nargs='+', help="Filename of the dataset(s) to evaluate")
+    # parser.add_argument("-o", action='store_true', help="Set true to overwrite")
+    # parser.add_argument("-f", default=None, help="Name of the results file to write")
+    parser.add_argument('--val_size', type=int, default=10000,
+                        help='Number of instances used for reporting validation performance')
+    parser.add_argument('--offset', type=int, default=0,
+                        help='Offset where to start in dataset (default 0)')
+    parser.add_argument('--eval_batch_size', type=int, default=1024,
+                        help="Batch size to use during (baseline) evaluation")
+    # parser.add_argument('--decode_type', type=str, default='greedy',
+    #                     help='Decode type, greedy or sampling')
+    parser.add_argument('--width', type=int, nargs='+',
+                        help='Sizes of beam to use for beam search (or number of samples for sampling), '
+                             '0 to disable (default), -1 for infinite')
+    parser.add_argument('--decode_strategy', default='greedy', type=str,
+                        help='Beam search (bs), Sampling (sample) or Greedy (greedy)')
+    parser.add_argument('--softmax_temperature', type=parse_softmax_temperature, default=1,
+                        help="Softmax temperature (sampling or bs)")
+    parser.add_argument('--model', type=str)
+    parser.add_argument('--no_cuda', action='store_true', help='Disable CUDA')
+    parser.add_argument('--no_progress_bar', action='store_true', help='Disable progress bar')
+    parser.add_argument('--compress_mask', action='store_true', help='Compress mask into long')
+    parser.add_argument('--max_calc_batch_size', type=int, default=10000, help='Size for subbatches')
+    parser.add_argument('--results_dir', default='results', help="Name of results directory")
+    parser.add_argument('--multiprocessing', action='store_true',
+                        help='Use multiprocessing to parallelize over multiple GPUs')
+
+    opts = parser.parse_args(args)
+    opts.f = None
+    assert opts.f is None or (len(opts.datasets) == 1 and len(opts.width) <= 1), \
+        "Cannot specify result filename with more than one dataset or more than one width"
+
+    opts.widths = opts.width if opts.width is not None else [0]
+
     return opts
