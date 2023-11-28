@@ -13,6 +13,8 @@ from datetime import timedelta
 from utils.functions import parse_softmax_temperature
 mp = torch.multiprocessing.get_context('spawn')
 
+from options import get_eval_options
+
 
 def get_best(sequences, cost, ids=None, batch_size=None):
     """
@@ -49,11 +51,17 @@ def eval_dataset_mp(args):
     return _eval_dataset(model, dataset, width, softmax_temp, opts, device)
 
 
-def eval_dataset(dataset_path, width, softmax_temp, opts):
+def eval_dataset(dataset_path, width, softmax_temp, opts, dataset=None):
     # Even with multiprocessing, we load the model here since it contains the name where to write results
     model, _ = load_model(opts.model)
+    
+    rescale_dist = model.rescale_dist 
+    non_Euc = model.non_Euc 
+    assert model.problem.NAME == "tsp", "Only implemented for TSP"
+
     use_cuda = torch.cuda.is_available() and not opts.no_cuda
     if opts.multiprocessing:
+        raise NotImplementedError("Multiprocessing not implemented (tested) for eval")
         assert use_cuda, "Can only do multiprocessing with cuda"
         num_processes = torch.cuda.device_count()
         assert opts.val_size % num_processes == 0
@@ -66,7 +74,8 @@ def eval_dataset(dataset_path, width, softmax_temp, opts):
 
     else:
         device = torch.device("cuda:0" if use_cuda else "cpu")
-        dataset = model.problem.make_dataset(filename=dataset_path, num_samples=opts.val_size, offset=opts.offset)
+        dataset = model.problem.make_dataset(filename=dataset_path, num_samples=opts.val_size, offset=opts.offset,
+                                             non_Euc=non_Euc, rescale=rescale_dist, dataset=dataset)
         results = _eval_dataset(model, dataset, width, softmax_temp, opts, device)
 
     # This is parallelism, even if we use multiprocessing (we report as if we did not use multiprocessing, e.g. 1 GPU)
@@ -80,6 +89,9 @@ def eval_dataset(dataset_path, width, softmax_temp, opts):
     print("Average parallel duration: {}".format(np.mean(durations) / parallelism))
     print("Calculated total duration: {}".format(timedelta(seconds=int(np.sum(durations) / parallelism))))
 
+
+    if True: # skip save results
+        return costs, tours, durations
     dataset_basename, ext = os.path.splitext(os.path.split(dataset_path)[-1])
     model_name = "_".join(os.path.normpath(os.path.splitext(opts.model)[0]).split(os.sep)[-2:])
     if opts.o is None:
@@ -93,7 +105,7 @@ def eval_dataset(dataset_path, width, softmax_temp, opts):
             softmax_temp, opts.offset, opts.offset + len(costs), ext
         ))
     else:
-        out_file = opts.o
+        out_file = opts.f
 
     assert opts.f or not os.path.isfile(
         out_file), "File already exists! Try running with -f option to overwrite."
@@ -116,6 +128,10 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
 
     results = []
     for batch in tqdm(dataloader, disable=opts.no_progress_bar):
+        
+        if not model.rescale_dist:
+            batch["scale_factors"] = None
+        
         batch = move_to(batch, device)
 
         start = time.time()
@@ -127,6 +143,12 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                         "eval_batch_size should be smaller than calc batch size"
                     batch_rep = 1
                     iter_rep = 1
+
+                    # "greedy" do not use sample_many
+                    costs, ll, sequences = model(batch, return_pi=True)
+                    # return sequences, cost  # FIXME: wierd approach to make things work ... 
+
+
                 elif width * opts.eval_batch_size > opts.max_calc_batch_size:
                     assert opts.eval_batch_size == 1
                     assert width % opts.max_calc_batch_size == 0
@@ -135,11 +157,11 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                 else:
                     batch_rep = width
                     iter_rep = 1
-                assert batch_rep > 0
-                # This returns (batch_size, iter_rep shape)
-                sequences, costs = model.sample_many(batch, batch_rep=batch_rep, iter_rep=iter_rep)
-                batch_size = len(costs)
-                ids = torch.arange(batch_size, dtype=torch.int64, device=costs.device)
+                # assert batch_rep > 0
+                # # This returns (batch_size, iter_rep shape)
+                # sequences, costs = model.sample_many(batch, batch_rep=batch_rep, iter_rep=iter_rep)
+                # batch_size = len(costs)
+                # ids = torch.arange(batch_size, dtype=torch.int64, device=costs.device)
             else:
                 assert opts.decode_strategy == 'bs'
 
@@ -149,15 +171,20 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                     max_calc_batch_size=opts.max_calc_batch_size
                 )
 
-        if sequences is None:
-            sequences = [None] * batch_size
-            costs = [math.inf] * batch_size
-        else:
-            sequences, costs = get_best(
-                sequences.cpu().numpy(), costs.cpu().numpy(),
-                ids.cpu().numpy() if ids is not None else None,
-                batch_size
-            )
+        # FIXME: this is a hack to make things work
+        # if sequences is None:
+        #     sequences = [None] * batch_size
+        #     costs = [math.inf] * batch_size
+        # else:
+        #     sequences, costs = get_best(
+        #         sequences.cpu().numpy(), costs.cpu().numpy(),
+        #         ids.cpu().numpy() if ids is not None else None,
+        #         batch_size
+        #     )
+        
+        sequences = sequences.cpu().numpy()
+        costs = costs.cpu().numpy()
+
         duration = time.time() - start
         for seq, cost in zip(sequences, costs):
             if model.problem.NAME == "tsp":
@@ -174,43 +201,14 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
     return results
 
 
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("datasets", nargs='+', help="Filename of the dataset(s) to evaluate")
-    parser.add_argument("-f", action='store_true', help="Set true to overwrite")
-    parser.add_argument("-o", default=None, help="Name of the results file to write")
-    parser.add_argument('--val_size', type=int, default=10000,
-                        help='Number of instances used for reporting validation performance')
-    parser.add_argument('--offset', type=int, default=0,
-                        help='Offset where to start in dataset (default 0)')
-    parser.add_argument('--eval_batch_size', type=int, default=1024,
-                        help="Batch size to use during (baseline) evaluation")
-    # parser.add_argument('--decode_type', type=str, default='greedy',
-    #                     help='Decode type, greedy or sampling')
-    parser.add_argument('--width', type=int, nargs='+',
-                        help='Sizes of beam to use for beam search (or number of samples for sampling), '
-                             '0 to disable (default), -1 for infinite')
-    parser.add_argument('--decode_strategy', type=str,
-                        help='Beam search (bs), Sampling (sample) or Greedy (greedy)')
-    parser.add_argument('--softmax_temperature', type=parse_softmax_temperature, default=1,
-                        help="Softmax temperature (sampling or bs)")
-    parser.add_argument('--model', type=str)
-    parser.add_argument('--no_cuda', action='store_true', help='Disable CUDA')
-    parser.add_argument('--no_progress_bar', action='store_true', help='Disable progress bar')
-    parser.add_argument('--compress_mask', action='store_true', help='Compress mask into long')
-    parser.add_argument('--max_calc_batch_size', type=int, default=10000, help='Size for subbatches')
-    parser.add_argument('--results_dir', default='results', help="Name of results directory")
-    parser.add_argument('--multiprocessing', action='store_true',
-                        help='Use multiprocessing to parallelize over multiple GPUs')
-
-    opts = parser.parse_args()
-
-    assert opts.o is None or (len(opts.datasets) == 1 and len(opts.width) <= 1), \
-        "Cannot specify result filename with more than one dataset or more than one width"
-
-    widths = opts.width if opts.width is not None else [0]
-
-    for width in widths:
+def eval(opts):
+    for width in opts.widths:
         for dataset_path in opts.datasets:
             eval_dataset(dataset_path, width, opts.softmax_temperature, opts)
+
+
+
+if __name__ == "__main__":
+    eval(get_eval_options())
+
+    
