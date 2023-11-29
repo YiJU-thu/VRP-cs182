@@ -23,6 +23,13 @@ def to_np(data):
     return data
 
 
+def to_torch(data):
+    for key in data:
+        if isinstance(data[key], np.ndarray):
+            data[key] = torch.from_numpy(data[key]).float()
+    return data
+
+
 def get_euclidean_dist_matrix(points):
     return torch.cdist(points, points, p=2)
 
