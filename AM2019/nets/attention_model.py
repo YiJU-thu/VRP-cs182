@@ -56,6 +56,8 @@ class AttentionModel(nn.Module):
                  n_edge_encode_layers=0,
                  encode_original_edge=False,
                  rescale_dist=False,
+                 force_step_pomo=False, # POMO force the first step
+                 force_step_shpp=False, # SHPP force the first two steps
                  n_encode_layers=2,
                  tanh_clipping=10.,
                  mask_inner=True,
@@ -97,7 +99,15 @@ class AttentionModel(nn.Module):
         self.n_edge_encode_layers = n_edge_encode_layers
         self.encode_original_edge = encode_original_edge
         self.rescale_dist = rescale_dist
-        
+
+        # implement POMO & SHPP
+        self.force_step_pomo = force_step_pomo  # POMO is not compatible with CVRP
+        self.force_step_shpp = force_step_shpp
+        assert not (self.force_step_pomo and self.force_step_shpp), "POMO is not compatible with SHPP"
+        force_steps = self.force_step_pomo + self.force_step_shpp*2
+        assert force_steps in [0, 1, 2], "force_steps must be 0, 1, or 2"
+        self.force_steps = force_steps
+
         assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
 
         # Problem specific context parameters (placeholder and step context dimension)
@@ -208,9 +218,15 @@ class AttentionModel(nn.Module):
             
             scale_factors = None if not self.rescale_dist else input['scale_factors']
             
-            embeddings, _ = self.embedder(init_embed, S, scale_factors=input['scale_factors'], edge_matrix=edge_matrix)
+            embeddings, _ = self.embedder(init_embed, S, scale_factors=scale_factors, edge_matrix=edge_matrix)
 
         _log_p, pi = self._inner(input, embeddings)
+
+        if self.force_step_pomo:
+            assert pi[:, 0].eq(0).all(), "POMO force the first step"
+        if self.force_step_shpp:
+            assert pi[:, 0].eq(0).all(), "SHPP force the first step"
+            assert pi[:, 1].eq(1).all(), "SHPP force the second step"
 
         cost, mask = self.problem.get_costs(input, pi)
         # Log likelyhood is calculated within the model since returning it per action does not work well with
@@ -268,6 +284,8 @@ class AttentionModel(nn.Module):
         # Optional: mask out actions irrelevant to objective so they do not get reinforced
         if mask is not None:
             log_p[mask] = 0
+        
+        log_p[:,:self.force_steps] = 0  # mask the forced steps
 
         assert (log_p > -1000).data.all(), "Logprobs should not be -inf, check sampling procedure!"
 
@@ -349,6 +367,7 @@ class AttentionModel(nn.Module):
 
         # Perform decoding steps
         i = 0
+
         while not (self.shrink_size is None and state.all_finished()):
 
             if self.shrink_size is not None:
@@ -364,9 +383,14 @@ class AttentionModel(nn.Module):
                     fixed = fixed[unfinished]
 
             log_p, mask = self._get_log_p(fixed, state)
-
-            # Select the indices of the next nodes in the sequences, result (batch_size) long
-            selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
+            
+            if i >= self.force_steps:
+                # Select the indices of the next nodes in the sequences, result (batch_size) long
+                selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
+            else:
+                selected = torch.tensor([i]*batch_size, device=log_p.device)
+                # NOTE: SHPP: 0 -> 1 -> xxx
+                # so when use SHPP mode to solve SHPP, let terminal=0, start=1
 
             state = state.update(selected)
 

@@ -11,7 +11,7 @@ from tensorboard_logger import Logger as TbLogger
 from nets.critic_network import CriticNetwork
 from options import get_options
 from train import train_epoch, validate, get_inner_model
-from reinforce_baselines import NoBaseline, ExponentialBaseline, CriticBaseline, RolloutBaseline, WarmupBaseline
+from reinforce_baselines import NoBaseline, ExponentialBaseline, CriticBaseline, RolloutBaseline, WarmupBaseline, PomoBaseline
 from nets.attention_model import AttentionModel
 from nets.pointer_network import PointerNetwork, CriticNetworkLSTM
 from utils import torch_load_cpu, load_problem
@@ -92,7 +92,9 @@ def run(opts):
         full_svd=opts.full_svd,
         only_distance=opts.only_distance,
         n_edge_encode_layers=opts.n_edge_encode_layers,
-        encode_original_edge=opts.encode_original_edge, 
+        encode_original_edge=opts.encode_original_edge,
+        force_step_pomo=(opts.pomo_sample is not None),
+        force_step_shpp=False, # FIXME: this is not implemented yet 
         n_encode_layers=opts.n_encode_layers,
         mask_inner=True,
         mask_logits=True,
@@ -136,6 +138,8 @@ def run(opts):
         )
     elif opts.baseline == 'rollout':
         baseline = RolloutBaseline(model, problem, opts)
+    elif opts.baseline == 'pomo':
+        baseline = PomoBaseline(model, problem, opts)
     else:
         assert opts.baseline is None, "Unknown baseline: {}".format(opts.baseline)
         baseline = NoBaseline()
