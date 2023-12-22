@@ -94,7 +94,6 @@ def get_tour_len_torch(data, tour):
     else:
         dist_mat = get_euclidean_dist_matrix(data["coords"])
     
-    dist_mat = data["distance"] # shape=(I,N,N)
     (I, N, _) = data["coords"].shape
     assert tour.shape == (I, N)
     t0 = tour.flatten()

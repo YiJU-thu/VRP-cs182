@@ -228,6 +228,40 @@ class RolloutBaseline(Baseline):
         self._update_model(load_model, state_dict['epoch'], state_dict['dataset'])
 
 
+class PomoBaseline(Baseline):
+
+    def __init__(self, model, problem, opts):
+        super(Baseline, self).__init__()
+
+        self.problem = problem
+        self.opts = opts
+
+        self.n_sample_start = opts.pomo_sample  # default=None
+        self.n_sample_rot = self.rot_sample # default=None
+    
+    def wrap_dataset(self, dataset):
+        # TODO:
+        # 1. if self.n_sample_start (N1) is not None: sample n starts for each instance
+        # 2. if self.n_sample_rot (N2) is not None: sample n rotations for each (argumented) instance
+        # so argumented_dataset has N1 * N2 * B instances
+
+        raise NotImplementedError
+        argumented_dataset = ...
+
+        return BaselineDataset(argumented_dataset, baseline=None)
+
+    def unwrap_batch(self, batch):
+        return batch['data'], None
+    
+    def eval(self, x, c):
+        # TODO: reshape c to (N1*N2, B) and return mean of c for each row
+        # (N1*N2*B,) -> (N1*N2, B) -> (B,) -> (N1*N2, B)
+        
+        raise NotImplementedError
+        
+        return b_val, None
+
+
 class BaselineDataset(Dataset):
 
     def __init__(self, dataset=None, baseline=None):

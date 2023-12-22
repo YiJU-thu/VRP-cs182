@@ -38,6 +38,8 @@ def get_options(args=None):
     parser.add_argument('--only_distance', action='store_true', help='if True, do not use coordinates in the model') # compatible with rank_k_approx > 0 & svd_original_edge = True
     parser.add_argument('--rand_dist', type=str, default='standard', help='"standard" or "complex"') # FIXME: can be combined with data_distribution
     parser.add_argument('--rescale_dist', action='store_true', help='if rand_dist is not standard, whether to rescale it to standard')
+    parser.add_argument('--pomo_sample', type=int, default=None, help='number of samples for pomo')
+    parser.add_argument('--rot_sample', type=int, default=None, help='number of samples for Sym-NCO')
 
     # Training
     parser.add_argument('--lr_model', type=float, default=1e-4, help="Set the learning rate for the actor network")
@@ -51,8 +53,8 @@ def get_options(args=None):
     parser.add_argument('--no_cuda', action='store_true', help='Disable CUDA')
     parser.add_argument('--exp_beta', type=float, default=0.8,
                         help='Exponential moving average baseline decay (default 0.8)')
-    parser.add_argument('--baseline', default='rollout',    # Yi: change the default baseline to 'rollout'
-                        help="Baseline to use: 'rollout', 'critic' or 'exponential', None (no basleine). Defaults to rollout.")
+    parser.add_argument('--baseline', default='rollout',    # change the default baseline to 'rollout'
+                        help="Baseline to use: 'rollout', 'pomo', 'critic' or 'exponential', None (no basleine). Defaults to rollout.")
     parser.add_argument('--bl_alpha', type=float, default=0.05,
                         help='Significance in the t-test for updating rollout baseline')
     parser.add_argument('--bl_warmup_epochs', type=int, default=None,
