@@ -153,9 +153,9 @@ def run(opts):
 
     # Initialize optimizer
     optimizer = optim.Adam(
-        [{'params': model.parameters(), 'lr': opts.lr_model}]
+        [{'params': model.parameters(), 'lr': opts.lr_model, 'weight_decay': opts.weight_decay_model}]
         + (
-            [{'params': baseline.get_learnable_parameters(), 'lr': opts.lr_critic}]
+            [{'params': baseline.get_learnable_parameters(), 'lr': opts.lr_critic, 'weight_decay': opts.weight_decay_critic}]
             if len(baseline.get_learnable_parameters()) > 0
             else []
         )
