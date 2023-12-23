@@ -142,6 +142,17 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
             },
             os.path.join(opts.save_dir, 'epoch-{}.pt'.format(epoch))
         )
+        logger.success(f"epoch-{epoch}.pt saved")
+        
+        # TODO: only keep 'model' for previously saved checkpoints
+        prev_saved_epoch = epoch - opts.checkpoint_epochs
+        fn = os.path.join(opts.save_dir, 'epoch-{}.pt'.format(prev_saved_epoch))
+        if os.path.exists(fn):
+            torch.save({
+                'model': torch.load(fn)['model']},
+                fn
+            )
+            logger.success(f"epoch-{prev_saved_epoch}.pt cleared")
 
     avg_reward = validate(model, val_dataset, opts)
 
