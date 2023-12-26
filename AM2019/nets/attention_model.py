@@ -56,8 +56,6 @@ class AttentionModel(nn.Module):
                  n_edge_encode_layers=0,
                  encode_original_edge=False,
                  rescale_dist=False,
-                 force_step_pomo=False, # POMO force the first step
-                 force_step_shpp=False, # SHPP force the first two steps
                  update_context_node=False,
                  n_encode_layers=2,
                  tanh_clipping=10.,
@@ -106,14 +104,6 @@ class AttentionModel(nn.Module):
         self.n_edge_encode_layers = n_edge_encode_layers
         self.encode_original_edge = encode_original_edge
         self.rescale_dist = rescale_dist
-
-        # implement POMO & SHPP
-        self.force_step_pomo = force_step_pomo  # POMO is not compatible with CVRP
-        self.force_step_shpp = force_step_shpp
-        assert not (self.force_step_pomo and self.force_step_shpp), "POMO is not compatible with SHPP"
-        force_steps = self.force_step_pomo + self.force_step_shpp*2
-        assert force_steps in [0, 1, 2], "force_steps must be 0, 1, or 2"
-        self.force_steps = force_steps
 
         assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
 
@@ -186,7 +176,7 @@ class AttentionModel(nn.Module):
         if temp is not None:  # Do not change temperature if not provided
             self.temp = temp
 
-    def forward(self, input, return_pi=False):
+    def forward(self, input, force_steps=0, return_pi=False):
         """
         :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
         :param return_pi: whether to return the output sequences, this is optional as it is not compatible with
@@ -232,18 +222,15 @@ class AttentionModel(nn.Module):
             
             embeddings, _ = self.embedder(init_embed, S, scale_factors=scale_factors, edge_matrix=edge_matrix)
 
-        _log_p, pi = self._inner(input, embeddings)
+        _log_p, pi = self._inner(input, embeddings, force_steps=force_steps)
 
-        if self.force_step_pomo:
-            assert pi[:, 0].eq(0).all(), "POMO force the first step"
-        if self.force_step_shpp:
-            assert pi[:, 0].eq(0).all(), "SHPP force the first step"
-            assert pi[:, 1].eq(1).all(), "SHPP force the second step"
-
+        for i in range(force_steps):
+            assert pi[:, i].eq(i).all(), "Forced output incorrect"
+        
         cost, mask = self.problem.get_costs(input, pi)
         # Log likelyhood is calculated within the model since returning it per action does not work well with
         # DataParallel since sequences can be of different lengths
-        ll = self._calc_log_likelihood(_log_p, pi, mask)
+        ll = self._calc_log_likelihood(_log_p, pi, mask, force_steps=force_steps)
         if return_pi:
             return cost, ll, pi
 
@@ -288,7 +275,7 @@ class AttentionModel(nn.Module):
 
         return flat_parent[feas_ind], flat_action[feas_ind], flat_score[feas_ind]
 
-    def _calc_log_likelihood(self, _log_p, a, mask):
+    def _calc_log_likelihood(self, _log_p, a, mask, force_steps=0):
 
         # Get log_p corresponding to selected actions
         log_p = _log_p.gather(2, a.unsqueeze(-1)).squeeze(-1)
@@ -297,7 +284,8 @@ class AttentionModel(nn.Module):
         if mask is not None:
             log_p[mask] = 0
         
-        log_p[:,:self.force_steps] = 0  # mask the forced steps
+        # FIXME: force_steps can be implemented as a mask
+        log_p[:,:force_steps] = 0  # mask the forced steps
 
         assert (log_p > -1000).data.all(), "Logprobs should not be -inf, check sampling procedure!"
 
@@ -365,7 +353,7 @@ class AttentionModel(nn.Module):
         return self.init_embed(nodes), Sk
 
       
-    def _inner(self, input, embeddings):
+    def _inner(self, input, embeddings, force_steps=0):
 
         outputs = []
         sequences = []
@@ -400,7 +388,7 @@ class AttentionModel(nn.Module):
                 glimpse = None
             log_p, mask, glimpse = self._get_log_p(fixed, state, glimpse)
             
-            if i >= self.force_steps:
+            if i >= force_steps:
                 # Select the indices of the next nodes in the sequences, result (batch_size) long
                 selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
             else:

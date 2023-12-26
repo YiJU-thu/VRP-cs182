@@ -41,7 +41,7 @@ def get_options(args=None):
     parser.add_argument('--pomo_sample', type=int, default=None, help='number of samples for pomo')
     parser.add_argument('--rot_sample', type=int, default=None, help='number of samples for Sym-NCO')
     parser.add_argument('--update_context_node', action='store_true', help='if True, use the context node instead of graph embedding for next step context node')
-
+    parser.add_argument('--shpp', action='store_true', help='if True, train in SHPP mode: fix the first two steps')
 
     # Training
     parser.add_argument('--lr_model', type=float, default=1e-4, help="Set the learning rate for the actor network")
@@ -113,6 +113,15 @@ def get_options(args=None):
         opts.bl_warmup_epochs = 1 if opts.baseline == 'rollout' else 0
     assert (opts.bl_warmup_epochs == 0) or (opts.baseline == 'rollout')
     assert opts.epoch_size % opts.batch_size == 0, "Epoch size must be integer multiple of batch size!"
+    
+    if opts.shpp:
+        opts.force_steps = 2
+    elif opts.pomo_sample is not None:
+        opts.force_steps = 1
+    else:
+        opts.force_steps = 0
+    
+    
     return opts
 
 

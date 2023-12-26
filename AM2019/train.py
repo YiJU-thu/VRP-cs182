@@ -20,7 +20,7 @@ def get_inner_model(model):
 def validate(model, dataset, opts):
     # Validate
     print('Validating...')
-    cost = rollout(model, dataset, opts)
+    cost = rollout(model, dataset, opts, force_steps=0)
     avg_cost = cost.mean()
     print('Validation overall avg_cost: {} +- {}'.format(
         avg_cost, torch.std(cost) / math.sqrt(len(cost))))
@@ -28,14 +28,14 @@ def validate(model, dataset, opts):
     return avg_cost
 
 
-def rollout(model, dataset, opts):
+def rollout(model, dataset, opts, force_steps=0):
     # Put in greedy evaluation mode!
     set_decode_type(model, "greedy")
     model.eval()
 
     def eval_model_bat(bat):
         with torch.no_grad():
-            cost, _ = model(move_to(bat, opts.device))
+            cost, _ = model(move_to(bat, opts.device), force_steps=force_steps)
         return cost.data.cpu()
 
     val = []
@@ -184,7 +184,7 @@ def train_batch(
     bl_val = move_to(bl_val, opts.device) if bl_val is not None else None
 
     # Evaluate model, get costs and log probabilities
-    cost, log_likelihood = model(x)
+    cost, log_likelihood = model(x, force_steps=opts.force_steps)
 
     # Evaluate baseline, get baseline loss if any (only for critic)
     bl_val, bl_loss = baseline.eval(x, cost) if bl_val is None else (bl_val, 0)
