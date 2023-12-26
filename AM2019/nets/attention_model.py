@@ -58,6 +58,7 @@ class AttentionModel(nn.Module):
                  rescale_dist=False,
                  force_step_pomo=False, # POMO force the first step
                  force_step_shpp=False, # SHPP force the first two steps
+                 update_context_node=False,
                  n_encode_layers=2,
                  tanh_clipping=10.,
                  mask_inner=True,
@@ -87,6 +88,12 @@ class AttentionModel(nn.Module):
         self.n_heads = n_heads
         self.checkpoint_encoder = checkpoint_encoder
         self.shrink_size = shrink_size
+
+        # if update_context_node:
+        # h_c(t+1,N) = concat([h_c(t,N+1), h_{\pi_1}, h_{\pi_t}])
+        # else:
+        # h_c(t+1,N) = concat([h_graph, h_{\pi_1}, h_{\pi_t}])
+        self.update_context_node = update_context_node
 
         self.non_Euc = non_Euc
         # idea 1: node feature augmentation
@@ -162,12 +169,17 @@ class AttentionModel(nn.Module):
         )
 
         # For each node we compute (glimpse key, glimpse value, logit key) so 3 * embedding_dim
+        # glimpse key / value are for computing h_{c,N+1} (eq.5,6 - Kool, 2019)
+        # logit key is for computing the logits (eq.7 - Kool, 2019)
         self.project_node_embeddings = nn.Linear(embedding_dim, 3 * embedding_dim, bias=False)
         self.project_fixed_context = nn.Linear(embedding_dim, embedding_dim, bias=False)
         self.project_step_context = nn.Linear(step_context_dim, embedding_dim, bias=False)
         assert embedding_dim % n_heads == 0
         # Note n_heads * val_dim == embedding_dim so input to project_out is embedding_dim
         self.project_out = nn.Linear(embedding_dim, embedding_dim, bias=False)
+        # FIXME: before update_context_node is implemented, project_glimpse is absorbed into project_out
+        # this may raise error in evaluating previously trained models
+        self.project_glimpse = nn.Linear(embedding_dim, embedding_dim, bias=False)
 
     def set_decode_type(self, decode_type, temp=None):
         self.decode_type = decode_type
@@ -362,6 +374,7 @@ class AttentionModel(nn.Module):
 
         # Compute keys, values for the glimpse and keys for the logits once as they can be reused in every step
         fixed = self._precompute(embeddings)
+        glimpse = embeddings.mean(1)
 
         batch_size = state.ids.size(0)
 
@@ -382,7 +395,10 @@ class AttentionModel(nn.Module):
                     state = state[unfinished]
                     fixed = fixed[unfinished]
 
-            log_p, mask = self._get_log_p(fixed, state)
+            assert glimpse.shape == (batch_size, self.embedding_dim), "glimpse shape is {}".format(glimpse.shape)
+            if not self.update_context_node:
+                glimpse = None
+            log_p, mask, glimpse = self._get_log_p(fixed, state, glimpse)
             
             if i >= self.force_steps:
                 # Select the indices of the next nodes in the sequences, result (batch_size) long
@@ -456,6 +472,8 @@ class AttentionModel(nn.Module):
         fixed_context = self.project_fixed_context(graph_embed)[:, None, :]
 
         # The projection of the node embeddings for the attention is calculated once up front
+        # glimpse key / value are for computing h_{c,N+1} (eq.5,6 - Kool, 2019)
+        # logit key is for computing the logits (eq.7 - Kool, 2019)
         glimpse_key_fixed, glimpse_val_fixed, logit_key_fixed = \
             self.project_node_embeddings(embeddings[:, None, :, :]).chunk(3, dim=-1)
 
@@ -480,10 +498,12 @@ class AttentionModel(nn.Module):
             torch.arange(log_p.size(-1), device=log_p.device, dtype=torch.int64).repeat(log_p.size(0), 1)[:, None, :]
         )
 
-    def _get_log_p(self, fixed, state, normalize=True):
+    def _get_log_p(self, fixed, state, glimpse=None, normalize=True):
+
+        graph_context_query = self.project_fixed_context(glimpse)[:, None, :] if glimpse is not None else fixed.context_node_projected
 
         # Compute query = context node embedding
-        query = fixed.context_node_projected + \
+        query = graph_context_query + \
                 self.project_step_context(self._get_parallel_step_context(fixed.node_embeddings, state))
 
         # Compute keys and values for the nodes
@@ -500,7 +520,7 @@ class AttentionModel(nn.Module):
 
         assert not torch.isnan(log_p).any()
 
-        return log_p, mask
+        return log_p, mask, glimpse
 
     def _get_parallel_step_context(self, embeddings, state, from_depot=False):
         """
@@ -607,9 +627,9 @@ class AttentionModel(nn.Module):
         glimpse = self.project_out(
             heads.permute(1, 2, 3, 0, 4).contiguous().view(-1, num_steps, 1, self.n_heads * val_size))
 
-        # Now projecting the glimpse is not needed since this can be absorbed into project_out
-        # final_Q = self.project_glimpse(glimpse)
-        final_Q = glimpse
+        # OLD: Now projecting the glimpse is not needed since this can be absorbed into project_out
+        final_Q = self.project_glimpse(glimpse)
+        # final_Q = glimpse
         # Batch matrix multiplication to compute logits (batch_size, num_steps, graph_size)
         # logits = 'compatibility'
         logits = torch.matmul(final_Q, logit_K.transpose(-2, -1)).squeeze(-2) / math.sqrt(final_Q.size(-1))
@@ -620,7 +640,7 @@ class AttentionModel(nn.Module):
         if self.mask_logits:
             logits[mask] = -math.inf
 
-        return logits, glimpse.squeeze(-2)
+        return logits, glimpse.squeeze(dim=(1,2))
 
     def _get_attention_node_data(self, fixed, state):
 

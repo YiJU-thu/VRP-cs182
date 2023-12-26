@@ -95,6 +95,7 @@ def run(opts):
         encode_original_edge=opts.encode_original_edge,
         force_step_pomo=(opts.pomo_sample is not None),
         force_step_shpp=False, # FIXME: this is not implemented yet 
+        update_context_node=opts.update_context_node,
         n_encode_layers=opts.n_encode_layers,
         mask_inner=True,
         mask_logits=True,
@@ -105,6 +106,7 @@ def run(opts):
     ).to(opts.device)
 
     if opts.use_cuda and torch.cuda.device_count() > 1:
+        # model = torch.nn.parallel.DistributedDataParallel(model)
         model = torch.nn.DataParallel(model)
 
     # Overwrite model parameters by parameters to load
