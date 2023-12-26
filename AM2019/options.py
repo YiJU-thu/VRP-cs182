@@ -40,6 +40,8 @@ def get_options(args=None):
     parser.add_argument('--rescale_dist', action='store_true', help='if rand_dist is not standard, whether to rescale it to standard')
     parser.add_argument('--pomo_sample', type=int, default=None, help='number of samples for pomo')
     parser.add_argument('--rot_sample', type=int, default=None, help='number of samples for Sym-NCO')
+    parser.add_argument('--update_context_node', action='store_true', help='if True, use the context node instead of graph embedding for next step context node')
+
 
     # Training
     parser.add_argument('--lr_model', type=float, default=1e-4, help="Set the learning rate for the actor network")
