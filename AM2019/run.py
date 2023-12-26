@@ -93,8 +93,6 @@ def run(opts):
         only_distance=opts.only_distance,
         n_edge_encode_layers=opts.n_edge_encode_layers,
         encode_original_edge=opts.encode_original_edge,
-        force_step_pomo=(opts.pomo_sample is not None),
-        force_step_shpp=False, # FIXME: this is not implemented yet 
         update_context_node=opts.update_context_node,
         n_encode_layers=opts.n_encode_layers,
         mask_inner=True,

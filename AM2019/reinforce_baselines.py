@@ -169,7 +169,7 @@ class RolloutBaseline(Baseline):
         else:
             self.dataset = dataset
         print("Evaluating baseline model on evaluation dataset")
-        self.bl_vals = rollout(self.model, self.dataset, self.opts).cpu().numpy()
+        self.bl_vals = rollout(self.model, self.dataset, self.opts, force_steps=0).cpu().numpy()
         self.mean = self.bl_vals.mean()
         self.epoch = epoch
 
@@ -177,7 +177,7 @@ class RolloutBaseline(Baseline):
         print("Evaluating baseline on dataset...")
         # Need to convert baseline to 2D to prevent converting to double, see
         # https://discuss.pytorch.org/t/dataloader-gives-double-instead-of-float/717/3
-        return BaselineDataset(dataset, rollout(self.model, dataset, self.opts).view(-1, 1))
+        return BaselineDataset(dataset, rollout(self.model, dataset, self.opts, force_steps=self.opts.force_steps).view(-1, 1))
 
     def unwrap_batch(self, batch):
         return batch['data'], batch['baseline'].view(-1)  # Flatten result to undo wrapping as 2D
@@ -185,7 +185,7 @@ class RolloutBaseline(Baseline):
     def eval(self, x, c):
         # Use volatile mode for efficient inference (single batch so we do not use rollout function)
         with torch.no_grad():
-            v, _ = self.model(x)
+            v, _ = self.model(x, force_steps=self.opts.force_steps)
 
         # There is no loss
         return v, 0
@@ -197,7 +197,7 @@ class RolloutBaseline(Baseline):
         :param epoch: The current epoch
         """
         print("Evaluating candidate model on evaluation dataset")
-        candidate_vals = rollout(model, self.dataset, self.opts).cpu().numpy()
+        candidate_vals = rollout(model, self.dataset, self.opts, force_steps=0).cpu().numpy()
 
         candidate_mean = candidate_vals.mean()
 
