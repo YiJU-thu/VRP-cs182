@@ -120,6 +120,7 @@ def get_options(args=None):
         opts.force_steps = 1
     else:
         opts.force_steps = 0
+    opts.force_steps_batch = opts.force_steps
     
     
     return opts

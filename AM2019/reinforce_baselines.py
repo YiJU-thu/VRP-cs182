@@ -177,7 +177,7 @@ class RolloutBaseline(Baseline):
         print("Evaluating baseline on dataset...")
         # Need to convert baseline to 2D to prevent converting to double, see
         # https://discuss.pytorch.org/t/dataloader-gives-double-instead-of-float/717/3
-        return BaselineDataset(dataset, rollout(self.model, dataset, self.opts, force_steps=self.opts.force_steps).view(-1, 1))
+        return BaselineDataset(dataset, rollout(self.model, dataset, self.opts, force_steps=self.opts.force_steps_batch).view(-1, 1))
 
     def unwrap_batch(self, batch):
         return batch['data'], batch['baseline'].view(-1)  # Flatten result to undo wrapping as 2D
@@ -185,7 +185,7 @@ class RolloutBaseline(Baseline):
     def eval(self, x, c):
         # Use volatile mode for efficient inference (single batch so we do not use rollout function)
         with torch.no_grad():
-            v, _ = self.model(x, force_steps=self.opts.force_steps)
+            v, _ = self.model(x, force_steps=self.opts.force_steps_batch)
 
         # There is no loss
         return v, 0
