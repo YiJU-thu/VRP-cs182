@@ -67,7 +67,7 @@ class TSP(object):
 class TSPDataset(Dataset):
     
     def __init__(self, filename=None, dataset=None, size=50, num_samples=1000000, offset=0, 
-                 non_Euc=False, rand_dist="standard", rescale=False, distribution=None):
+                 non_Euc=False, rand_dist="standard", rescale=False, distribution=None, force_triangle_iter=2):
         super(TSPDataset, self).__init__()
         self.non_Euc = non_Euc
         self.rescale = rescale
@@ -102,7 +102,7 @@ class TSPDataset(Dataset):
             if rand_dist == "standard":
                 assert rescale == False
             rescale_tmp = (rand_dist == "complex")
-            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp)
+            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp, force_triangle_iter=force_triangle_iter)
             if not rescale:
                 self.data = recover_graph(self.data)
 
