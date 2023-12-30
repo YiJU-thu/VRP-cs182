@@ -95,10 +95,11 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     #   and generate a batch_size dataset for each batch
     n_batches = opts.epoch_size // opts.batch_size
     for batch_id in range(n_batches):
-
-        opts.force_steps_batch = opts.force_steps * (not (batch_id%5 == 1 and opts.shpp))   # do not force steps for every 5 batches
-        # so the initial place holder gets a chance to be trained to find good second step (only apply for shpp mode)
-        # choose ==1 so that logged batch val is based on SHPP (while epoch metric is TSP)
+        
+        if opts.shpp and opts.shpp_skip != 0:
+            opts.force_steps_batch = opts.force_steps * (batch_id%opts.shpp_skip != 1)   # do not force steps for every opts.shpp_skip batches
+            # so the initial place holder gets a chance to be trained to find good second step (only apply for shpp mode)
+            # choose ==1 so that logged batch val is based on SHPP (while epoch metric is TSP)
 
         batch_dataset = baseline.wrap_dataset(problem.make_dataset(
             size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, 
