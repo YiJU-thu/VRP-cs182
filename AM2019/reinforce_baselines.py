@@ -238,7 +238,7 @@ class PomoBaseline(Baseline):
 
         self.n_sample_start = opts.pomo_sample  # default=None
         self.n_sample_rot = self.rot_sample # default=None
-    
+
     def wrap_dataset(self, dataset):
         # TODO:
         # 1. if self.n_sample_start (N1) is not None: sample n starts for each instance
