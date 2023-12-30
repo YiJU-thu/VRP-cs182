@@ -251,7 +251,36 @@ def get_normalize_coords_batch(coords):
     raise NotImplementedError
 
 
-def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=None):
+def force_triangle_ineq(X: torch.Tensor, iter=4, verbose=False) -> torch.Tensor:
+    """Force the triangle inequality to hold for a batch of matrix.
+
+    Args:
+        x: A batch of distance matrices (batch_size, n,n).
+        iter: Number of iterations to run the algorithm. None means until convergence.
+        verbose: If True, print the err in each iteration.
+
+    Returns:
+        A batch of distance matrices (batch_size, n,n) that satisfy the triangle
+        inequality.
+    """
+    X0 = X.clone()
+    I, N, _ = X.shape # I: batch size, N: graph size
+    s = 0
+    iter = float('inf') if iter is None else iter
+    while s < iter:
+        Y = X.view(I,N,1,N) + X.transpose(1,2).view(I,1,N,N)
+        Z = torch.min(Y, dim=3)[0]
+        err = torch.norm(Z-X).item() / (I*N)
+        if verbose:
+            print(s, err)
+        if err < 1e-4:
+            break
+        X = Z
+        s += 1
+    return Z
+
+
+def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=None, force_triangle_iter=0):
     """
     Creates a batch of num_graphs random graph with N vertices.
     In is always in a "standard" distribution, but we also generate "scale_factors" to transform it to a more realistic/diverse instance
@@ -262,6 +291,8 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
         non_Euc: if True, return coords, rel_dist_mat, dist_mat, rescale_factors; else, return coords, rescale_factors
         rescale: if True, sample scale_factors from a log-normal distribution, indicates its deviation from the standard distribution
         seed: random seed (set as None in training, since it should already be set OUTSIDE)
+        force_triangle_iter: if >0, force the triangle inequality to hold for the distance matrix -> use for [iter] param in [force_triangle_ineq]
+            suggested: iter=2 for training set generation, iter=4 or None for test set generation
     
     return: a dict with keys
         coords: shape = (num_graphs, n, 2)
@@ -330,8 +361,18 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
 
     distance_matrix = relative_dist_matrix * euclidean_distance_matrix
 
-    return {"coords": points, "rel_distance": relative_dist_matrix, "distance": distance_matrix,
+    data =  {"coords": points, "rel_distance": relative_dist_matrix, "distance": distance_matrix,
             "scale_factors": scale_factors}
+
+    if force_triangle_iter > 0:
+        # TODO: first, recover the actual distance matrix, then force triangle inequality
+        # afterwards, normalize the distance matrix ...
+        data = recover_graph(data)
+        data["distance"] = force_triangle_ineq(data["distance"], iter=force_triangle_iter)
+        data = normalize_graph(data, rescale=rescale)
+    
+    return data
+
 
 
 def get_random_graph_np(*args, **kwargs):
