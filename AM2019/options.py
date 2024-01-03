@@ -38,8 +38,8 @@ def get_options(args=None):
     parser.add_argument('--only_distance', action='store_true', help='if True, do not use coordinates in the model') # compatible with rank_k_approx > 0 & svd_original_edge = True
     parser.add_argument('--rand_dist', type=str, default='standard', help='"standard" or "complex"') # FIXME: can be combined with data_distribution
     parser.add_argument('--rescale_dist', action='store_true', help='if rand_dist is not standard, whether to rescale it to standard')
-    parser.add_argument('--pomo_sample', type=int, default=None, help='number of samples for pomo')
-    parser.add_argument('--rot_sample', type=int, default=None, help='number of samples for Sym-NCO')
+    parser.add_argument('--pomo_sample', type=int, default=1, help='number of samples for pomo')
+    parser.add_argument('--rot_sample', type=int, default=1, help='number of samples for Sym-NCO')
     parser.add_argument('--update_context_node', action='store_true', help='if True, use the context node instead of graph embedding for next step context node')
     parser.add_argument('--shpp', action='store_true', help='if True, train in SHPP mode: fix the first two steps')
     parser.add_argument('--shpp_skip', type=int, default=5, help='when training with SHPP, train original TSP every shpp_skip batches. 0 means inf')
@@ -115,9 +115,18 @@ def get_options(args=None):
     assert (opts.bl_warmup_epochs == 0) or (opts.baseline == 'rollout')
     assert opts.epoch_size % opts.batch_size == 0, "Epoch size must be integer multiple of batch size!"
     
+    opts.pomo_sample = 1 if opts.pomo_sample is None else opts.pomo_sample
+    opts.rot_sample = 1 if opts.rot_sample is None else opts.rot_sample
+
+    # adjust batch_size & epoch_size for POMO
+    # so the input batch size is still opts.batch_size (true batch size)
+    N1, N2 = opts.pomo_sample, opts.rot_sample
+    opts.batch_size = opts.batch_size // (N1*N2)
+    opts.epoch_size = opts.epoch_size // (N1*N2)
+
     if opts.shpp:
         opts.force_steps = 2
-    elif opts.pomo_sample is not None:
+    elif opts.pomo_sample > 1:
         opts.force_steps = 1
     else:
         opts.force_steps = 0
