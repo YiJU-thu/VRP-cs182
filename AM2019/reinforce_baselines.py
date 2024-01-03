@@ -273,6 +273,7 @@ class PomoBaseline(Baseline):
     def eval(self, x, c):
         # c: (B*N1*N2,)
         N1, N2 = self.n_sample_start, self.n_sample_rot
+        assert len(c) == self.opts.batch_size * N1 * N2, "c size mismatch"
         B = c.size(0)//(N1*N2)  # batch size
 
         # reshape c to (B, N1*N2) and return mean of c for each row as the shared baseline
