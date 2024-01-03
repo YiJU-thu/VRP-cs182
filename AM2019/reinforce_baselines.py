@@ -140,6 +140,25 @@ class CriticBaseline(Baseline):
         self.critic.load_state_dict({**self.critic.state_dict(), **critic_state_dict})
 
 
+class BaselineDataset(Dataset):
+
+    def __init__(self, dataset=None, baseline=None):
+        super(BaselineDataset, self).__init__()
+
+        self.dataset = dataset
+        self.baseline = baseline
+        assert (len(self.dataset) == len(self.baseline))
+
+    def __getitem__(self, item):
+        return {
+            'data': self.dataset[item],
+            'baseline': self.baseline[item]
+        }
+
+    def __len__(self):
+        return len(self.dataset)
+
+
 class RolloutBaseline(Baseline):
 
     def __init__(self, model, problem, opts, epoch=0):
@@ -237,45 +256,39 @@ class PomoBaseline(Baseline):
         self.opts = opts
 
         self.n_sample_start = opts.pomo_sample  # default=None
-        self.n_sample_rot = self.rot_sample # default=None
+        self.n_sample_rot = opts.rot_sample # default=None
+
 
     def wrap_dataset(self, dataset):
-        # TODO:
-        # 1. if self.n_sample_start (N1) is not None: sample n starts for each instance
-        # 2. if self.n_sample_rot (N2) is not None: sample n rotations for each (argumented) instance
-        # so argumented_dataset has N1 * N2 * B instances
-
-        raise NotImplementedError
-        argumented_dataset = ...
-
-        return BaselineDataset(argumented_dataset, baseline=None)
+        print("Sample for the instance ...")
+        N1 = self.n_sample_start
+        N2 = self.n_sample_rot
+        dataset.pomo_augment(N1, N2)
+         
+        return dataset
 
     def unwrap_batch(self, batch):
-        return batch['data'], None
+        return batch, None # Flatten result to undo wrapping as 2D
     
     def eval(self, x, c):
-        # TODO: reshape c to (N1*N2, B) and return mean of c for each row
-        # (N1*N2*B,) -> (N1*N2, B) -> (B,) -> (N1*N2, B)
+        if self.n_sample_start is not None:
+            N1 = self.n_sample_start
+        else:
+            N1 = 1
         
-        raise NotImplementedError
+        if self.n_sample_rot is not None:
+            N2 = self.n_sample_rot
+        else:
+            N2 = 1
+
+        B = c.size(0)//(N1*N2)
+
+        # reshape c to (B, N1*N2) and return mean of c for each row as the shared baseline
+        # (N1*N2*B,) -> (B, N1*N2) -> (B,)
+        c_reshaped = c.view(B, N1*N2)
+        b_val = c_reshaped.mean(dim=1)
+        # expand b_val to (B*N1*N2) and return
+        b_val = b_val.repeat_interleave(N1*N2)
+        self.bl_vals = b_val
         
-        return b_val, None
-
-
-class BaselineDataset(Dataset):
-
-    def __init__(self, dataset=None, baseline=None):
-        super(BaselineDataset, self).__init__()
-
-        self.dataset = dataset
-        self.baseline = baseline
-        assert (len(self.dataset) == len(self.baseline))
-
-    def __getitem__(self, item):
-        return {
-            'data': self.dataset[item],
-            'baseline': self.baseline[item]
-        }
-
-    def __len__(self):
-        return len(self.dataset)
+        return b_val, 0
