@@ -8,6 +8,7 @@ from train import rollout, get_inner_model
 class Baseline(object):
 
     def wrap_dataset(self, dataset):
+        # return a (torch.utils.data.)Dataset object (or its subclass, e.g., BaselineDataset, TSPDataset, etc.)
         return dataset
 
     def unwrap_batch(self, batch):
@@ -256,33 +257,23 @@ class PomoBaseline(Baseline):
         self.problem = problem
         self.opts = opts
 
-        self.n_sample_start = opts.pomo_sample  # default=None
-        self.n_sample_rot = opts.rot_sample # default=None
+        self.n_sample_start = opts.pomo_sample if opts.pomo_sample is not None else 1 # default=None
+        self.n_sample_rot = opts.rot_sample if opts.rot_sample is not None else 1 # default=None
 
 
     def wrap_dataset(self, dataset):
-        print("Sample for the instance ...")
-        N1 = self.n_sample_start
-        N2 = self.n_sample_rot
-        dataset.pomo_augment(N1, N2)
-         
+        # print("Sample for the instance ...")
+        dataset.pomo_augment(self.n_sample_start, self.n_sample_rot)
+
         return dataset
 
     def unwrap_batch(self, batch):
         return batch, None # Flatten result to undo wrapping as 2D
     
     def eval(self, x, c):
-        if self.n_sample_start is not None:
-            N1 = self.n_sample_start
-        else:
-            N1 = 1
-        
-        if self.n_sample_rot is not None:
-            N2 = self.n_sample_rot
-        else:
-            N2 = 1
-
-        B = c.size(0)//(N1*N2)
+        # c: (B*N1*N2,)
+        N1, N2 = self.n_sample_start, self.n_sample_rot
+        B = c.size(0)//(N1*N2)  # batch size
 
         # reshape c to (B, N1*N2) and return mean of c for each row as the shared baseline
         # (N1*N2*B,) -> (B, N1*N2) -> (B,)
@@ -290,6 +281,5 @@ class PomoBaseline(Baseline):
         b_val = c_reshaped.mean(dim=1)
         # expand b_val to (B*N1*N2) and return
         b_val = b_val.repeat_interleave(N1*N2)
-        self.bl_vals = b_val
         
         return b_val, 0

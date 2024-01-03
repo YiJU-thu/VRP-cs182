@@ -135,67 +135,73 @@ class TSPDataset(Dataset):
     def pomo_augment(self, N1, N2):
         dataset = self.data
 
-        def sample_coordinate_for_batch(batch_coordinate_data, N1):
-            B, N, _ = batch_coordinate_data.shape
-            # batch_coordinate_data with shape (batch_size, N, 2)
-            transposed_matrices = torch.stack([torch.roll(batch_coordinate_data, shifts= -i%N, dims=1) for i in range(N1)])
+        def sample_coords_start(x, N1):
+            if N1 == 1 or N1 is None:
+                return x
+            B, N, _ = x.shape   # shape: (batch_size, graph_size, 2)
 
-            # Transpose the first two dimensions
-            transposed_matrices = transposed_matrices.transpose(0, 1)
+            # generate N1 batches, batch i is the original batch shifted by -i (so the first node is the -i th node)
+            # transpose the first two dimensions so that instances from the same original instances are together
+            x_augment = torch.stack([torch.roll(x, shifts= -i%N, dims=1) for i in range(N1)]).\
+                transpose(0, 1).\
+                    reshape(B*N1, N, 2)
+            assert x_augment.shape == (B*N1, N, 2)
+            assert torch.norm(x_augment[0, 0] - x_augment[1, -1]) < 1e-8  # graph 0's first node is graph 1's last node
+            return x_augment
+        
+        def sample_dist_mat_start(x, N1):
+            if N1 == 1 or N1 is None:
+                return x
+            B, N, _ = x.shape   # shape: (batch_size, graph_size, graph_size)
+            
+            # generate N1 batches, batch i is the original batch shifted by -i in both row & column
+            # (so the first node is the -i th node)
+            # transpose the first two dimensions so that instances from the same original instances are together
+            x_augment = torch.stack([torch.roll(x, shifts= (-i%N,-i%N), dims=(1,2)) for i in range(N1)]).\
+                transpose(0, 1).\
+                    reshape(B*N1, N, N)
+            assert x_augment.shape == (B*N1, N, N)
+            assert torch.norm(x_augment[0, 0, 1] - x_augment[1, -1, 0]) < 1e-8  # graph 0's first node is graph 1's last node
+            return x_augment
+        
+        # sample N1 starts for each instance
+        dataset['coords'] = sample_coords_start(dataset['coords'], N1)
+        if self.non_Euc:
+            dataset['distance'] = sample_dist_mat_start(dataset['distance'], N1)
+            dataset['rel_distance'] = sample_dist_mat_start(dataset['rel_distance'], N1)
+        
 
-            # Reshape to combine the first two dimensions
-            new_matrix = transposed_matrices.reshape(B*N1, N, 2)
-            return new_matrix
-        
-        def reorder_distance_for_batch(batch_distance_data, N1):
-            B, N, _ = batch_distance_data.shape
-            transposed_matrices = torch.stack([torch.roll(batch_distance_data, shifts= (-i%N,-i%N), dims=(1,2)) for i in range(N1)])
-            # Transpose the first two dimensions
-            transposed_matrices = transposed_matrices.transpose(0, 1)
-            # Reshape the matrix to shape (B*N1, N, N)
-            combined_matrix = transposed_matrices.reshape(B*N1, N, N)
-            return combined_matrix
-        
-        if N1 is not None:
-            # sample N1 starts for each instance
-            dataset['coords'] = sample_coordinate_for_batch(dataset['coords'], N1)
-            if self.non_Euc:
-                dataset['distance'] = reorder_distance_for_batch(dataset['distance'], N1)
-                dataset['rel_distance'] = reorder_distance_for_batch(dataset['rel_distance'], N1)
-        
-        def rotated_coordinate_for_batch(batch_coordinate_data, N2):
-            B_N1, N, _ = batch_coordinate_data.shape
-            matrices = []
-            for _ in range(N2):
-                # Generate a random angle
-                theta = torch.rand(1) * 2 * torch.pi
-
-                # Create the rotation matrix
-                rotation_matrix = torch.tensor([[torch.cos(theta), -torch.sin(theta)],
+        def sample_coords_rot(x, N2):
+            if N2==1 or N2 is None:
+                return x
+            B_N1, N, _ = x.shape  # shape: (batch_size*N1, graph_size, 2)
+            
+            # generate N2 rotation matrices
+            rot_mats = [torch.tensor([[torch.cos(theta), -torch.sin(theta)],
                                                 [torch.sin(theta), torch.cos(theta)]])
-                matrices.append(rotation_matrix)
-            # Rotate the matrices around (0.5, 0.5)
-            matrix_subtracted = batch_coordinate_data - 0.5
-            rotated_matrices = torch.stack([torch.matmul(matrix_subtracted, rotation_matrix) for rotation_matrix in matrices])
-            rotated_matrices += 0.5
-            rotated_matrices = (rotated_matrices.transpose(0, 1)).reshape(B_N1*N2, N, 2)
-            return rotated_matrices
+                        for theta in torch.rand(N2) * 2 * torch.pi]
+            assert len(rot_mats) == N2
+            
+            # Rotate the matrices around (0.5, 0.5): 
+            # first translate the matrix to center at (0, 0), then rotate, then translate back
+            # (the origin coords are in a unit square, so the center is (0.5, 0.5))
+            x_augment = torch.stack([torch.matmul(x - 0.5, rot_mat) + 0.5 for rot_mat in rot_mats]).\
+                transpose(0, 1).\
+                    reshape(B_N1*N2, N, 2)
+            assert x_augment.shape == (B_N1*N2, N, 2)
+            return x_augment
         
-        def copy_distance_for_batch(batch_distance_data, N2):
-            B_N1, N, _ = batch_distance_data.shape
-            copied_matrices = torch.stack([batch_distance_data for _ in range(N2)])
-            copied_matrices = (copied_matrices.transpose(0, 1)).reshape(B_N1*N2, N, N)
-            return copied_matrices
+        def sample_dist_mat_rot(x, N2):
+            if N2==1 or N2 is None:
+                return x
+            B_N1, N, _ = x.shape # shape: (batch_size*N1, graph_size, graph_size)
+            x_augment = torch.stack([x for _ in range(N2)]).transpose(0, 1).reshape(B_N1*N2, N, N)
+            return x_augment
 
-        if N2 is not None:
-            # sample N2 rotations for each instance
-            dataset['coords'] = rotated_coordinate_for_batch(dataset['coords'], N2)
-            if self.non_Euc:
-                dataset['distance'] = copy_distance_for_batch(dataset['distance'], N2)
-                dataset['rel_distance'] = copy_distance_for_batch(dataset['rel_distance'], N2)
-
-        # update the dataset，dataset is a dictionary
-        # dataset['coords']: (B*N1*N2, N, 2)
-        # dataset['distance']: (B*N1*N2, N, N)
+        # sample N2 rotations for each instance
+        dataset['coords'] = sample_coords_rot(dataset['coords'], N2)
+        if self.non_Euc:
+            dataset['distance'] = sample_dist_mat_rot(dataset['distance'], N2)
+            dataset['rel_distance'] = sample_dist_mat_rot(dataset['rel_distance'], N2)
         
         self.data = dataset
