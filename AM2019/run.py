@@ -174,6 +174,7 @@ def run(opts):
     lr_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lambda epoch: opts.lr_decay ** epoch)
 
     # Start the actual training loop
+    # FIXME: this dataset may be too large to fit in memory
     val_dataset = problem.make_dataset(
         size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, 
         non_Euc=opts.non_Euc, rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution)

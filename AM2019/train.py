@@ -16,7 +16,6 @@ from loguru import logger
 def get_inner_model(model):
     return model.module if isinstance(model, DataParallel) else model
 
-
 def validate(model, dataset, opts):
     # Validate
     print('Validating...')

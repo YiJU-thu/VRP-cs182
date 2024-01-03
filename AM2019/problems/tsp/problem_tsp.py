@@ -107,7 +107,11 @@ class TSPDataset(Dataset):
                 self.data = recover_graph(self.data)
 
 
-        self.size = self.data["coords"].shape[0]
+        # self.size = self.data["coords"].shape[0]
+
+    @property
+    def size(self):
+        return self.data["coords"].shape[0]
 
     def __len__(self):
         return self.size
@@ -127,3 +131,77 @@ class TSPDataset(Dataset):
                 "rel_distance": self.data['rel_distance'][idx],
                 "scale_factors": scale_factors,
             }
+    
+    def pomo_augment(self, N1, N2):
+        dataset = self.data
+
+        def sample_coords_start(x, N1):
+            if N1 == 1 or N1 is None:
+                return x
+            B, N, _ = x.shape   # shape: (batch_size, graph_size, 2)
+
+            # generate N1 batches, batch i is the original batch shifted by -i (so the first node is the -i th node)
+            # transpose the first two dimensions so that instances from the same original instances are together
+            x_augment = torch.stack([torch.roll(x, shifts= -i%N, dims=1) for i in range(N1)]).\
+                transpose(0, 1).\
+                    reshape(B*N1, N, 2)
+            assert x_augment.shape == (B*N1, N, 2)
+            assert torch.norm(x_augment[0, 0] - x_augment[1, -1]) < 1e-8  # graph 0's first node is graph 1's last node
+            return x_augment
+        
+        def sample_dist_mat_start(x, N1):
+            if N1 == 1 or N1 is None:
+                return x
+            B, N, _ = x.shape   # shape: (batch_size, graph_size, graph_size)
+            
+            # generate N1 batches, batch i is the original batch shifted by -i in both row & column
+            # (so the first node is the -i th node)
+            # transpose the first two dimensions so that instances from the same original instances are together
+            x_augment = torch.stack([torch.roll(x, shifts= (-i%N,-i%N), dims=(1,2)) for i in range(N1)]).\
+                transpose(0, 1).\
+                    reshape(B*N1, N, N)
+            assert x_augment.shape == (B*N1, N, N)
+            assert torch.norm(x_augment[0, 0, 1] - x_augment[1, -1, 0]) < 1e-8  # graph 0's first node is graph 1's last node
+            return x_augment
+        
+        # sample N1 starts for each instance
+        dataset['coords'] = sample_coords_start(dataset['coords'], N1)
+        if self.non_Euc:
+            dataset['distance'] = sample_dist_mat_start(dataset['distance'], N1)
+            dataset['rel_distance'] = sample_dist_mat_start(dataset['rel_distance'], N1)
+        
+
+        def sample_coords_rot(x, N2):
+            if N2==1 or N2 is None:
+                return x
+            B_N1, N, _ = x.shape  # shape: (batch_size*N1, graph_size, 2)
+            
+            # generate N2 rotation matrices
+            rot_mats = [torch.tensor([[torch.cos(theta), -torch.sin(theta)],
+                                                [torch.sin(theta), torch.cos(theta)]])
+                        for theta in torch.rand(N2) * 2 * torch.pi]
+            assert len(rot_mats) == N2
+            
+            # Rotate the matrices around (0.5, 0.5): 
+            # first translate the matrix to center at (0, 0), then rotate, then translate back
+            # (the origin coords are in a unit square, so the center is (0.5, 0.5))
+            x_augment = torch.stack([torch.matmul(x - 0.5, rot_mat) + 0.5 for rot_mat in rot_mats]).\
+                transpose(0, 1).\
+                    reshape(B_N1*N2, N, 2)
+            assert x_augment.shape == (B_N1*N2, N, 2)
+            return x_augment
+        
+        def sample_dist_mat_rot(x, N2):
+            if N2==1 or N2 is None:
+                return x
+            B_N1, N, _ = x.shape # shape: (batch_size*N1, graph_size, graph_size)
+            x_augment = torch.stack([x for _ in range(N2)]).transpose(0, 1).reshape(B_N1*N2, N, N)
+            return x_augment
+
+        # sample N2 rotations for each instance
+        dataset['coords'] = sample_coords_rot(dataset['coords'], N2)
+        if self.non_Euc:
+            dataset['distance'] = sample_dist_mat_rot(dataset['distance'], N2)
+            dataset['rel_distance'] = sample_dist_mat_rot(dataset['rel_distance'], N2)
+        
+        self.data = dataset

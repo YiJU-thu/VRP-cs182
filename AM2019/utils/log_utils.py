@@ -8,6 +8,12 @@ def log_values(cost, grad_norms, epoch, batch_id, step,
 
     print('grad_norm: {}, clipped: {}'.format(grad_norms[0], grad_norms_clipped[0]))
 
+    if opts.baseline == 'pomo': # log the variance of equivalent instances
+        N1, N2 = opts.pomo_sample, opts.rot_sample
+        c_reshaped = cost.view(-1, N1*N2)
+        div_pct = ((c_reshaped.max(dim=1)[0] - c_reshaped.min(dim=1)[0]) / c_reshaped.mean(dim=1)).mean().item()
+
+
     # Log values to tensorboard
     if not opts.no_tensorboard:
         tb_logger.log_value('avg_cost', avg_cost, step)
@@ -22,6 +28,9 @@ def log_values(cost, grad_norms, epoch, batch_id, step,
             tb_logger.log_value('critic_loss', bl_loss.item(), step)
             tb_logger.log_value('critic_grad_norm', grad_norms[1], step)
             tb_logger.log_value('critic_grad_norm_clipped', grad_norms_clipped[1], step)
+        
+        if opts.baseline == 'pomo':
+            tb_logger.log_value('pomo_div_pct', div_pct, step)
     
     # Log values to wandb
     if not opts.no_wandb:
@@ -37,3 +46,6 @@ def log_values(cost, grad_norms, epoch, batch_id, step,
                               'critic_grad_norm': grad_norms[1],
                               'critic_grad_norm_clipped': grad_norms_clipped[1],
                               })
+        
+        if opts.baseline == 'pomo':
+            wandb_logger.log({'pomo_div_pct': div_pct})
