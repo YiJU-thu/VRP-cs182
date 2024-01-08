@@ -228,15 +228,25 @@ class GraphAttentionEncoder(nn.Module):
         # To map input to embedding space
         self.init_embed = nn.Linear(node_dim, embed_dim) if node_dim is not None else None
         
-        self.layers = nn.Sequential(*(
-            MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden=feed_forward_hidden, 
-                                    normalization=normalization, encode_edge_matrix=(i < n_edge_encode_layers))
-            for i in range(n_layers)
-        ))
+        # change squential model to a list of layers
+        # FIXME: an ugly way to avoid problem when loading previous models
+        if n_edge_encode_layers <= 1:
+            self.layers = nn.Sequential(*(
+                MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden=feed_forward_hidden, 
+                                        normalization=normalization, encode_edge_matrix=(i < n_edge_encode_layers))
+                for i in range(n_layers)
+            ))
+        else:
+            self.layers = [
+                MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden=feed_forward_hidden, 
+                                        normalization=normalization, encode_edge_matrix=(i < n_edge_encode_layers))
+                for i in range(n_layers)
+            ]
 
         self.rescale_dist = rescale_dist
         self.rank_k_approx = rank_k_approx
         self.non_Euc = non_Euc
+        self.n_edge_encode_layers = n_edge_encode_layers
 
         if rescale_dist:
             scale_factors_dim = 3 if non_Euc else 1
@@ -256,7 +266,16 @@ class GraphAttentionEncoder(nn.Module):
         h = self.init_embed(x.view(-1, x.size(-1))).view(*x.size()[:2], -1) if self.init_embed is not None else x
 
         # FIXME: it's wired to pass this in order to avoid a Sequential forward error
-        h = self.layers((h, {"edge_matrix":edge_matrix}))
+        # Now allows pass edge_matrix to multiple encoding layers
+        if isinstance(self.layers, list):
+            for l in range(len(self.layers)):
+                if l < self.n_edge_encode_layers:
+                    h = self.layers[l]((h, {"edge_matrix":edge_matrix}))
+                else:
+                    h = self.layers[l](h)
+        else:   # previously trained models are saved as sequential
+            assert isinstance(self.layers, nn.Sequential)
+            h = self.layers[0]((h, {"edge_matrix":edge_matrix}))
 
         # the embedding of the graph is the concatenation of the average of h, the first k singular values
         # (and scale_dist if rescale_dist is True) going through a linear layer

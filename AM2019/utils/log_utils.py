@@ -11,7 +11,8 @@ def log_values(cost, grad_norms, epoch, batch_id, step,
     if opts.baseline == 'pomo': # log the variance of equivalent instances
         N1, N2 = opts.pomo_sample, opts.rot_sample
         c_reshaped = cost.view(-1, N1*N2)
-        div_pct = ((c_reshaped.max(dim=1)[0] - c_reshaped.min(dim=1)[0]) / c_reshaped.mean(dim=1)).mean().item()
+        c_max, c_min, c_mean = c_reshaped.max(dim=1)[0], c_reshaped.min(dim=1)[0], c_reshaped.mean(dim=1)
+        div_pct = ((c_max - c_min) / c_mean).mean().item()
 
 
     # Log values to tensorboard
@@ -31,6 +32,7 @@ def log_values(cost, grad_norms, epoch, batch_id, step,
         
         if opts.baseline == 'pomo':
             tb_logger.log_value('pomo_div_pct', div_pct, step)
+            tb_logger.log_value('pomo_avg_cost', c_min.mean().item(), step)
     
     # Log values to wandb
     if not opts.no_wandb:
@@ -49,3 +51,4 @@ def log_values(cost, grad_norms, epoch, batch_id, step,
         
         if opts.baseline == 'pomo':
             wandb_logger.log({'pomo_div_pct': div_pct})
+            wandb_logger.log({'pomo_avg_cost': c_min.mean().item()})
