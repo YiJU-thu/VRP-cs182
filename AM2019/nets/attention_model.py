@@ -137,7 +137,7 @@ class AttentionModel(nn.Module):
             assert n_edge_encode_layers <= n_encode_layers, "n_edge_encode_layer must be <= n_encode_layers"
             if n_edge_encode_layers > 0:
                 assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
-                assert n_edge_encode_layers == 1, "Now only support edge encoding at the first layer" # FIXME
+                # assert n_edge_encode_layers == 1, "Now only support edge encoding at the first layer" # FIXME
             if encode_original_edge:
                 assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
 
