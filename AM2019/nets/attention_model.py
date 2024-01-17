@@ -105,41 +105,42 @@ class AttentionModel(nn.Module):
         self.encode_original_edge = encode_original_edge
         self.rescale_dist = rescale_dist
 
-        assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
+        # assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
+        # if only_distance:
+        if only_distance:
+            assert non_Euc == True, "only_distance is only supported for non-Euclidean input"
+            assert rank_k_approx > 0, "only_distance is not supported for rank_k_approx = 0"
+            assert svd_original_edge == True, "must svd on the original edge matrix if only_distance is True"
 
+        assert n_edge_encode_layers <= n_encode_layers, "n_edge_encode_layer must be <= n_encode_layers"
+        if n_edge_encode_layers > 0:
+            assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
+            assert n_edge_encode_layers == 1, "Now only support edge encoding at the first layer" # FIXME
+        if encode_original_edge:
+            assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
+
+        node_dim = 2*(1-only_distance) + 2 * rank_k_approx  # x, y, u_i_k, v_i_k
         # Problem specific context parameters (placeholder and step context dimension)
         if self.is_vrp or self.is_orienteering or self.is_pctsp:
             # Embedding of last node + remaining_capacity / remaining length / remaining prize to collect
             step_context_dim = embedding_dim + 1
 
             if self.is_pctsp:
-                node_dim = 4  # x, y, expected_prize, penalty
+                node_dim += 2  # x, y, u_i_k, v_i_k, expected_prize, penalty
             else:
-                node_dim = 3  # x, y, demand / prize
+                node_dim += 1  # x, y, u_i_k, v_i_k, demand / prize
 
             # Special embedding projection for depot node
-            self.init_embed_depot = nn.Linear(2, embedding_dim)
+            self.init_embed_depot = nn.Linear(node_dim-1, embedding_dim)
             
+            # We dont do split delivery now
             if self.is_vrp and self.allow_partial:  # Need to include the demand if split delivery allowed
                 self.project_node_step = nn.Linear(1, 3 * embedding_dim, bias=False)
+        
         else:  # TSP
             assert problem.NAME == "tsp", "Unsupported problem: {}".format(problem.NAME)
             # Yifan: add node features
-            node_dim = 2 * (1-only_distance) + 2 * rank_k_approx  # x, y, u_i_k, v_i_k
             step_context_dim = 2 * embedding_dim  # Embedding of first and last node, "2" here means "first" and "last"
-            
-            # if only_distance:
-            if only_distance:
-                assert non_Euc == True, "only_distance is only supported for non-Euclidean input"
-                assert rank_k_approx > 0, "only_distance is not supported for rank_k_approx = 0"
-                assert svd_original_edge == True, "must svd on the original edge matrix if only_distance is True"
-
-            assert n_edge_encode_layers <= n_encode_layers, "n_edge_encode_layer must be <= n_encode_layers"
-            if n_edge_encode_layers > 0:
-                assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
-                assert n_edge_encode_layers == 1, "Now only support edge encoding at the first layer" # FIXME
-            if encode_original_edge:
-                assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
 
             # Learned input symbols for first action
             self.W_placeholder = nn.Parameter(torch.Tensor(2 * embedding_dim))
