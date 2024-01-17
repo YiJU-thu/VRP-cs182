@@ -280,7 +280,7 @@ def force_triangle_ineq(X: torch.Tensor, iter=4, verbose=False) -> torch.Tensor:
     return Z
 
 
-def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=None, force_triangle_iter=0):
+def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=None, force_triangle_iter=0, is_cvrp=False):
     """
     Creates a batch of num_graphs random graph with N vertices.
     In is always in a "standard" distribution, but we also generate "scale_factors" to transform it to a more realistic/diverse instance
@@ -293,19 +293,25 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
         seed: random seed (set as None in training, since it should already be set OUTSIDE)
         force_triangle_iter: if >0, force the triangle inequality to hold for the distance matrix -> use for [iter] param in [force_triangle_ineq]
             suggested: iter=2 for training set generation, iter=4 or None for test set generation
+        is_cvrp: if True, generate a CVRP instance, i.e., with demands
     
     return: a dict with keys
         coords: shape = (num_graphs, n, 2)
         rel_distance: shape = (num_graphs, n, n), if non_Euc=True
         distance: shape = (num_graphs, n, n), if non_Euc=True
         scale_factors: shape = (num_graphs, 3) if non_Euc=True, else (num_graphs,1)
-
+        demand: shape = (num_graphs, n) if is_cvrp=True
     """
 
     # in training, we should NOT use the same seed for all instances / batchs / epoches ...
     # for reproducibility, set the seed OUTSIDE (for the entire training process)
     if seed is not None:
         torch.manual_seed(seed)
+
+
+    # If it is a cvrp prolem, we need to add a depot
+    if is_cvrp:
+        n += 1
 
     # for a real instance, we add three paramters to control its distribution:
     # (1) sacle along y-axis (stretch coords vertically)
@@ -340,36 +346,50 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
     assert euclidean_distance_matrix.shape == (num_graphs, n, n)
 
     if not non_Euc:
-        return {"coords": points, "scale_factors": scale_factors}
+        data = {"coords": points, "scale_factors": scale_factors}
+    else:
+        # Yi: we decompose the relative matrix into two parts:
+        # (1) a symmetric matrix, X1, and (2) a matrix represents the "asymmetry", X2,
+        # so, relative matrix X = X1 * (1+X2)
+        # further, element in X1 follows a [log-normal] distribution, mu=0, sigma=sym_std(=0.5)
+        #       and element in X2 follows a [normal] distribution, mu=0, sigma=asym_std(=0.05)
 
-    # Yi: we decompose the relative matrix into two parts:
-    # (1) a symmetric matrix, X1, and (2) a matrix represents the "asymmetry", X2,
-    # so, relative matrix X = X1 * (1+X2)
-    # further, element in X1 follows a [log-normal] distribution, mu=0, sigma=sym_std(=0.5)
-    #       and element in X2 follows a [normal] distribution, mu=0, sigma=asym_std(=0.05)
+        sym_std = 0.5
+        sym_log = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))
+        sym_rel_dist_mat = torch.exp(sym_std * np.sqrt(0.5) * (sym_log + sym_log.permute(0, 2, 1)))
 
-    sym_std = 0.5
-    sym_log = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))
-    sym_rel_dist_mat = torch.exp(sym_std * np.sqrt(0.5) * (sym_log + sym_log.permute(0, 2, 1)))
+        asym_std = 0.05
+        asym = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))
+        asym_rel_dist_mat = asym_std * np.sqrt(0.5) * (asym - asym.permute(0, 2, 1))
 
-    asym_std = 0.05
-    asym = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))
-    asym_rel_dist_mat = asym_std * np.sqrt(0.5) * (asym - asym.permute(0, 2, 1))
+        relative_dist_matrix = sym_rel_dist_mat * torch.maximum(1 + asym_rel_dist_mat, torch.tensor(0.0))
+        assert relative_dist_matrix.shape == (num_graphs, n, n)
 
-    relative_dist_matrix = sym_rel_dist_mat * torch.maximum(1 + asym_rel_dist_mat, torch.tensor(0.0))
-    assert relative_dist_matrix.shape == (num_graphs, n, n)
+        distance_matrix = relative_dist_matrix * euclidean_distance_matrix
 
-    distance_matrix = relative_dist_matrix * euclidean_distance_matrix
+        data =  {"coords": points, "rel_distance": relative_dist_matrix, "distance": distance_matrix,
+                "scale_factors": scale_factors}
 
-    data =  {"coords": points, "rel_distance": relative_dist_matrix, "distance": distance_matrix,
-            "scale_factors": scale_factors}
+        if force_triangle_iter > 0:
+            # TODO: first, recover the actual distance matrix, then force triangle inequality
+            # afterwards, normalize the distance matrix ...
+            data = recover_graph(data)
+            data["distance"] = force_triangle_ineq(data["distance"], iter=force_triangle_iter)
+            data = normalize_graph(data, rescale=rescale)
+    
+    if is_cvrp:
+        # From VRP with RL paper https://arxiv.org/abs/1802.04240
+        CAPACITIES = {
+            10: 20.,
+            20: 30.,
+            50: 40.,
+            100: 50.
+        }
 
-    if force_triangle_iter > 0:
-        # TODO: first, recover the actual distance matrix, then force triangle inequality
-        # afterwards, normalize the distance matrix ...
-        data = recover_graph(data)
-        data["distance"] = force_triangle_ineq(data["distance"], iter=force_triangle_iter)
-        data = normalize_graph(data, rescale=rescale)
+        # the shape of demands is (num_graphs, n-1) ---- without depot
+        demand = (torch.FloatTensor(num_graphs, n-1).uniform_(0, 9).int() + 1).float() / CAPACITIES[n-1]
+        assert demand.shape == (num_graphs, n-1)
+        data["demand"] = demand
     
     return data
 
@@ -453,12 +473,23 @@ def scale_graph(data, sym_std=0.5, asym_std=0.05):
         scale_factors = torch.vstack([r, actual_sym_std/sym_std, actual_asym_std/asym_std]).T
         assert scale_factors.shape == (I, 3)
     
-    return {
-        "coords": coords,
-        "distance": dist_mat,
-        "rel_distance": dist_mat_rel,
-        "scale_factors": scale_factors
-    }
+    if "demand" in data:
+        demand = data["demand"]
+        assert demand.shape == (I, N-1)
+        return {
+            "coords": coords,
+            "distance": dist_mat,
+            "rel_distance": dist_mat_rel,
+            "scale_factors": scale_factors,
+            "demand": demand
+        }
+    else:
+        return {
+            "coords": coords,
+            "distance": dist_mat,
+            "rel_distance": dist_mat_rel,
+            "scale_factors": scale_factors
+        }
 
 
 def normalize_graph(data, rescale=False):
@@ -469,6 +500,7 @@ def normalize_graph(data, rescale=False):
             distance: (I, N, N) tensor
             rel_distance: (I, N, N) tensor
             scale_factors: (I, 3) if non_Euc else None?
+            demand: (I, N) tensor
     """
 
     if data.get("scale_factors") is not None:
@@ -510,9 +542,15 @@ def normalize_graph(data, rescale=False):
         normalized_data["rel_distance"] = dist_mat_rel
     normalized_data["scale_factors"] = None
 
+    if "demand" in data:
+        demand = data["demand"]
+        assert demand.shape == (I, N)
+        normalized_data["demand"] = demand
+
     if rescale:
         return scale_graph(normalized_data)
-    return normalized_data
+    else:
+        return normalized_data
 
 
 def recover_graph(data):
