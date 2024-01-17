@@ -293,30 +293,8 @@ class AttentionModel(nn.Module):
         # Calculate log_likelihood
         return log_p.sum(1)
 
-    def _init_embed(self, input):
-
-        # Yi: it's safe: you have assert problem.NAME == 'tsp' above
-        if self.is_vrp or self.is_orienteering or self.is_pctsp:
-            if self.is_vrp:
-                features = ('demand', )
-            elif self.is_orienteering:
-                features = ('prize', )
-            else:
-                assert self.is_pctsp
-                features = ('deterministic_prize', 'penalty')
-            return torch.cat(
-                (
-                    self.init_embed_depot(input['depot'])[:, None, :],
-                    self.init_embed(torch.cat((
-                        input['loc'],
-                        *(input[feat][:, :, None] for feat in features)
-                    ), -1))
-                ),
-                1
-            )
-        
-        # TSP
-        # Yifan TODO: svd and add node features, then go through the linear layer
+    def _init_embed(self, input):        
+        # svd and add node features, then go through the linear layer
         coords = input['coords']
         if self.rank_k_approx == 0:
             nodes = coords
@@ -343,15 +321,33 @@ class AttentionModel(nn.Module):
                 sqrt_S = torch.sqrt(Sk[:, None, :])
                 Uk, Vk = Uk * sqrt_S, Vk * sqrt_S
 
-            
-            
             if self.only_distance:
                 nodes = torch.cat([Uk, Vk], dim=2)
             else:
                 nodes = torch.cat([coords, Uk, Vk], dim=2)
-            
-        assert nodes.shape == (coords.shape[0], coords.shape[1], 2*(1-self.only_distance) + 2 * self.rank_k_approx)
-        return self.init_embed(nodes), Sk
+        
+        if self.is_vrp or self.is_orienteering or self.is_pctsp: # VRP, OP, PCTSP
+            if self.is_vrp:
+                features = ('demand', )
+            elif self.is_orienteering:
+                features = ('prize', )
+            else:
+                assert self.is_pctsp
+                features = ('deterministic_prize', 'penalty')
+            assert nodes.shape == (coords.shape[0], coords.shape[1], 2*(1-self.only_distance) + 2 * self.rank_k_approx)
+            return torch.cat(
+                (
+                    self.init_embed_depot(nodes[:,0])[:, None, :],
+                    self.init_embed(torch.cat((
+                        nodes[:,1:],
+                        *(input[feat][:, :, None] for feat in features)
+                    ), -1))
+                ),
+                1
+            ), Sk
+        else: #TSP
+            assert nodes.shape == (coords.shape[0], coords.shape[1], 2*(1-self.only_distance) + 2 * self.rank_k_approx)
+            return self.init_embed(nodes), Sk
 
       
     def _inner(self, input, embeddings, force_steps=0):

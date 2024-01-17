@@ -2,10 +2,12 @@ import torch
 from typing import NamedTuple
 from utils.boolmask import mask_long2bool, mask_long_scatter
 
+from loguru import logger
 
 class StateCVRP(NamedTuple):
     # Fixed input
     coords: torch.Tensor  # Depot + loc
+    dist: torch.Tensor  # Depot + loc
     demand: torch.Tensor
 
     # If this state contains multiple copies (i.e. beam search) for the same instance, then for memory efficiency
@@ -29,9 +31,9 @@ class StateCVRP(NamedTuple):
         else:
             return mask_long2bool(self.visited_, n=self.demand.size(-1))
 
-    @property
-    def dist(self):
-        return (self.coords[:, :, None, :] - self.coords[:, None, :, :]).norm(p=2, dim=-1)
+    # @property
+    # def dist(self):
+    #     return (self.coords[:, :, None, :] - self.coords[:, None, :, :]).norm(p=2, dim=-1)
 
     def __getitem__(self, key):
         assert torch.is_tensor(key) or isinstance(key, slice)  # If tensor, idx all tensors by this tensor:
@@ -51,7 +53,7 @@ class StateCVRP(NamedTuple):
     @staticmethod
     def initialize(data, visited_dtype=torch.uint8):
 
-        loc = data['corrds']
+        loc = data['coords']
         demand = data['demand']
         if 'distance' in data:
             dist = data['distance']
@@ -61,7 +63,7 @@ class StateCVRP(NamedTuple):
         batch_size, n_loc, _ = loc.size()
         prev_a = torch.zeros(batch_size, 1, dtype=torch.long, device=loc.device)
         return StateCVRP(
-            loc=loc,
+            coords=loc,
             demand=demand,
             dist=dist,
             ids=torch.arange(batch_size, dtype=torch.int64, device=loc.device)[:, None],  # Add steps dimension
@@ -78,7 +80,7 @@ class StateCVRP(NamedTuple):
                                  dtype=torch.int64, device=loc.device)  # Ceil
                                 ),
             lengths=torch.zeros(batch_size, 1, device=loc.device),
-            cur_coord=loc[0][:, None, :],  # Add step dimension
+            cur_coord=loc[:,0][:, None, :],  # Add step dimension
             i=torch.zeros(1, dtype=torch.int64, device=loc.device)  # Vector with length num_steps
         )
 
@@ -104,6 +106,10 @@ class StateCVRP(NamedTuple):
         #     1,
         #     selected[:, None].expand(selected.size(0), 1, self.coords.size(-1))
         # )[:, 0, :]
+        # print the shape of self.lengths, cur_coord, self.cur_coord
+        # logger.debug(self.lengths.shape)
+        # logger.debug(cur_coord.shape)
+        # logger.debug(self.cur_coord.shape)
         lengths = self.lengths + (cur_coord - self.cur_coord).norm(p=2, dim=-1)  # (batch_dim, 1)
 
         # Not selected_demand is demand of first node (by clamp) so incorrect for nodes that visit depot!

@@ -60,8 +60,8 @@ class CVRP(object):
         # Length is distance (L2-norm of difference) of each next location to its prev and of first and last to depot
         return (
             (d[:, 1:] - d[:, :-1]).norm(p=2, dim=2).sum(1)
-            + (d[:, 0] - dataset['coords'][0]).norm(p=2, dim=1)  # Depot to first
-            + (d[:, -1] - dataset['coords'][0]).norm(p=2, dim=1)  # Last to depot, will be 0 if depot is last
+            + (d[:, 0] - dataset['coords'][:,0]).norm(p=2, dim=1)  # Depot to first
+            + (d[:, -1] - dataset['coords'][:,0]).norm(p=2, dim=1)  # Last to depot, will be 0 if depot is last
         ), None
 
     @staticmethod
@@ -230,7 +230,6 @@ class VRPDataset(Dataset):
             self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp, force_triangle_iter=force_triangle_iter, is_cvrp=True)
             if not rescale:
                 self.data = recover_graph(self.data)
-            logger.debug(self.data.keys())
     
     @property
     def size(self):
@@ -243,7 +242,7 @@ class VRPDataset(Dataset):
         # return self.data[idx]
         # note: DataParallel requires everything does not support None type
         scale_factors = torch.tensor([float('nan')]) if not self.rescale else self.data['scale_factors'][idx]
-        logger.debug(self.data.keys())
+        # logger.debug(self.data.keys())
         if not self.non_Euc:
             return {
                 "coords": self.data['coords'][idx],
