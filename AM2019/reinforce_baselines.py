@@ -263,7 +263,9 @@ class PomoBaseline(Baseline):
 
     def wrap_dataset(self, dataset):
         # print("Sample for the instance ...")
-        dataset.pomo_augment(self.n_sample_start, self.n_sample_rot)
+        # Just do PO-MO augmentation for TSP
+        if self.problem.NAME == 'tsp':
+            dataset.pomo_augment(self.n_sample_start, self.n_sample_rot)
 
         return dataset
 
