@@ -95,14 +95,14 @@ def get_tour_len_torch(data, tour):
         dist_mat = get_euclidean_dist_matrix(data["coords"])
     
     (I, N, _) = data["coords"].shape
-    assert tour.shape == (I, N)
+    _, T = tour.shape
+    # assert tour.shape == (I, N) # NOTE: I skip this check, as we should allow a longer or shorter path (e.g., in CVRP)
     t0 = tour.flatten()
     t1 = torch.roll(tour, -1, dims=1).flatten()
-    idx_flatten = torch.arange(I * N, device=tour.device) // N
-    cost = dist_mat[idx_flatten, t0, t1].reshape(I, N) # shape=(I,N)
+    idx_flatten = torch.arange(I * T, device=tour.device) // T
+    cost = dist_mat[idx_flatten, t0, t1].reshape(I, T)
     cost = torch.sum(cost, dim=1)   # shape=(I,)
-
-
+    
     c = torch.sum(dist_mat[0][tour[0], torch.roll(tour[0],-1)])
     assert torch.allclose(c, cost[0])
     return cost
