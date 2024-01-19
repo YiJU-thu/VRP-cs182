@@ -126,12 +126,13 @@ class AttentionModel(nn.Module):
             step_context_dim = embedding_dim + 1
 
             if self.is_pctsp:
-                node_dim += 2  # x, y, u_i_k, v_i_k, expected_prize, penalty
+                feature_dim = 2 # expected_prize, penalty
             else:
-                node_dim += 1  # x, y, u_i_k, v_i_k, demand / prize
+                feature_dim = 1  # demand / prize
+            node_dim += feature_dim
 
             # Special embedding projection for depot node
-            self.init_embed_depot = nn.Linear(node_dim-1, embedding_dim)
+            self.init_embed_depot = nn.Linear(node_dim-feature_dim, embedding_dim)
             
             # We dont do split delivery now
             if self.is_vrp and self.allow_partial:  # Need to include the demand if split delivery allowed

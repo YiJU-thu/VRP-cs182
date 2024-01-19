@@ -53,16 +53,18 @@ class CVRP(object):
             used_cap[used_cap < 0] = 0
             assert (used_cap <= CVRP.VEHICLE_CAPACITY + 1e-5).all(), "Used more than capacity"
 
-        # Gather dataset in order of tour
-        loc_with_depot = dataset['coords']
-        d = loc_with_depot.gather(1, pi[..., None].expand(*pi.size(), loc_with_depot.size(-1)))
+        # # Gather dataset in order of tour
+        # loc_with_depot = dataset['coords']
+        # d = loc_with_depot.gather(1, pi[..., None].expand(*pi.size(), loc_with_depot.size(-1)))
 
-        # Length is distance (L2-norm of difference) of each next location to its prev and of first and last to depot
-        return (
-            (d[:, 1:] - d[:, :-1]).norm(p=2, dim=2).sum(1)
-            + (d[:, 0] - dataset['coords'][:,0]).norm(p=2, dim=1)  # Depot to first
-            + (d[:, -1] - dataset['coords'][:,0]).norm(p=2, dim=1)  # Last to depot, will be 0 if depot is last
-        ), None
+        # # Length is distance (L2-norm of difference) of each next location to its prev and of first and last to depot
+        # return (
+        #     (d[:, 1:] - d[:, :-1]).norm(p=2, dim=2).sum(1)
+        #     + (d[:, 0] - dataset['coords'][:,0]).norm(p=2, dim=1)  # Depot to first
+        #     + (d[:, -1] - dataset['coords'][:,0]).norm(p=2, dim=1)  # Last to depot, will be 0 if depot is last
+        # ), None
+    
+        return get_tour_len_torch(dataset, pi), None
 
     @staticmethod
     def make_dataset(*args, **kwargs):
