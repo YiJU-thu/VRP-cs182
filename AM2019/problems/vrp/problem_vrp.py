@@ -1,11 +1,21 @@
 from torch.utils.data import Dataset
 import torch
-import os
+import os, sys
 import pickle
 
 from problems.vrp.state_cvrp import StateCVRP
 from problems.vrp.state_sdvrp import StateSDVRP
 from utils.beam_search import beam_search
+
+from loguru import logger
+
+
+curr_path = os.path.dirname(__file__)
+utils_vrp_path = os.path.join(curr_path, '..', '..', '..', 'utils_project')
+if utils_vrp_path not in sys.path:
+    sys.path.append(utils_vrp_path)
+from utils_vrp import get_random_graph, normalize_graph, recover_graph,\
+      get_tour_len_torch, to_torch
 
 
 class CVRP(object):
@@ -44,14 +54,14 @@ class CVRP(object):
             assert (used_cap <= CVRP.VEHICLE_CAPACITY + 1e-5).all(), "Used more than capacity"
 
         # Gather dataset in order of tour
-        loc_with_depot = torch.cat((dataset['depot'][:, None, :], dataset['loc']), 1)
+        loc_with_depot = dataset['coords']
         d = loc_with_depot.gather(1, pi[..., None].expand(*pi.size(), loc_with_depot.size(-1)))
 
         # Length is distance (L2-norm of difference) of each next location to its prev and of first and last to depot
         return (
             (d[:, 1:] - d[:, :-1]).norm(p=2, dim=2).sum(1)
-            + (d[:, 0] - dataset['depot']).norm(p=2, dim=1)  # Depot to first
-            + (d[:, -1] - dataset['depot']).norm(p=2, dim=1)  # Last to depot, will be 0 if depot is last
+            + (d[:, 0] - dataset['coords'][:,0]).norm(p=2, dim=1)  # Depot to first
+            + (d[:, -1] - dataset['coords'][:,0]).norm(p=2, dim=1)  # Last to depot, will be 0 if depot is last
         ), None
 
     @staticmethod
@@ -81,7 +91,7 @@ class CVRP(object):
 
         return beam_search(state, beam_size, propose_expansions)
 
-
+# We dont need this class for now
 class SDVRP(object):
 
     NAME = 'sdvrp'  # Split Delivery Vehicle Routing Problem
@@ -150,7 +160,7 @@ class SDVRP(object):
 
         return beam_search(state, beam_size, propose_expansions)
 
-
+# We don't need this function for now
 def make_instance(args):
     depot, loc, demand, capacity, *args = args
     grid_size = 1
@@ -165,19 +175,34 @@ def make_instance(args):
 
 class VRPDataset(Dataset):
     
-    def __init__(self, filename=None, size=50, num_samples=1000000, offset=0, distribution=None):
+    def __init__(self, filename=None, dataset=None, size=50, num_samples=1000000, offset=0,
+                    non_Euc=False, rand_dist="standard", rescale=False, distribution=None, force_triangle_iter=2):
         super(VRPDataset, self).__init__()
+        self.non_Euc = non_Euc
+        self.rescale = rescale
 
         self.data_set = []
-        if filename is not None:
-            assert os.path.splitext(filename)[1] == '.pkl'
+        if filename is not None or dataset is not None:
+            if filename is not None:
+                assert dataset is None
+                assert filename.endswith('.pkl')
+                # assert os.path.splitext(filename)[1] == '.pkl'
 
-            with open(filename, 'rb') as f:
-                data = pickle.load(f)
-            self.data = [make_instance(args) for args in data[offset:offset+num_samples]]
+                with open(filename, 'rb') as f:
+                    data = pickle.load(f)
+            else:
+                data = dataset
+        
+            if isinstance(data, dict):
+                # keys are: coords, distance, demands (rel_distance, scale_factors)
+                data = to_torch(data)
+                self.data = normalize_graph(data, rescale=rescale)
+
+            else:
+                raise NotImplementedError
 
         else:
-
+            """
             # From VRP with RL paper https://arxiv.org/abs/1802.04240
             CAPACITIES = {
                 10: 20.,
@@ -196,10 +221,39 @@ class VRPDataset(Dataset):
                 for i in range(num_samples)
             ]
 
-        self.size = len(self.data)
+        self.size = len(self.data)"""
+            # Use get_random_graph function from utils.py
+            assert rand_dist in ["standard", "complex"]
+            if rand_dist == "standard":
+                assert rescale == False
+            rescale_tmp = (rand_dist == "complex")
+            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp, force_triangle_iter=force_triangle_iter, is_cvrp=True)
+            if not rescale:
+                self.data = recover_graph(self.data)
+    
+    @property
+    def size(self):
+        return self.data["coords"].shape[0]
 
     def __len__(self):
         return self.size
 
     def __getitem__(self, idx):
-        return self.data[idx]
+        # return self.data[idx]
+        # note: DataParallel requires everything does not support None type
+        scale_factors = torch.tensor([float('nan')]) if not self.rescale else self.data['scale_factors'][idx]
+        # logger.debug(self.data.keys())
+        if not self.non_Euc:
+            return {
+                "coords": self.data['coords'][idx],
+                "demand": self.data['demand'][idx],
+                "scale_factors": scale_factors,
+            }
+        else:
+            return {
+                "coords": self.data['coords'][idx],
+                "distance": self.data['distance'][idx],
+                "rel_distance": self.data['rel_distance'][idx],
+                "demand": self.data['demand'][idx],
+                "scale_factors": scale_factors,
+            }
