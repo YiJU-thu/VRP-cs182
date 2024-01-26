@@ -86,7 +86,7 @@ class Beamsearch(object):
         # Update scores
         self.scores = bestScores
         # Update backpointers
-        prev_k = bestScoresId / self.num_nodes
+        prev_k = bestScoresId // self.num_nodes
         self.prev_Ks.append(prev_k)
         # Update outputs
         new_nodes = bestScoresId - prev_k * self.num_nodes

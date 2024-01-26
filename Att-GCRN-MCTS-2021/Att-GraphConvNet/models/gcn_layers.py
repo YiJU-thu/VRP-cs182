@@ -89,7 +89,7 @@ class EdgeFeatures(nn.Module):
 
     def __init__(self, hidden_dim):
         super(EdgeFeatures, self).__init__()
-        self.U = nn.Conv1d(hidden_dim, hidden_dim, (1,1))
+        self.U = nn.Conv2d(hidden_dim, hidden_dim, (1,1))
         self.V = nn.Conv1d(hidden_dim, hidden_dim, 1)
         
     def forward(self, x, e):
@@ -159,9 +159,9 @@ class MLP(nn.Module):
         self.L = L
         U = []
         for layer in range(self.L - 1):
-            U.append(nn.Conv1d(hidden_dim, hidden_dim, (1, 1))) # B x H x V x V
+            U.append(nn.Conv2d(hidden_dim, hidden_dim, (1, 1))) # B x H x V x V
         self.U = nn.ModuleList(U)
-        self.V = nn.Conv1d(hidden_dim, output_dim, (1, 1)) # B x O x V x V
+        self.V = nn.Conv2d(hidden_dim, output_dim, (1, 1)) # B x O x V x V
 
     def forward(self, x):
         """
