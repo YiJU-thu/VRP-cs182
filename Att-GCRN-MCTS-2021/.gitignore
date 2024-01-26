@@ -124,4 +124,6 @@ dmypy.json
 
 # untrack files under any results & logs
 **/results/
+**/outputs/
+**/wandb/
 **/logs/
