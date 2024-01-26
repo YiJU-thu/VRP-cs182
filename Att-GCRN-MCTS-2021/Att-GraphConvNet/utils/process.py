@@ -455,7 +455,7 @@ def main(config, data_generator, wandb_logger=None):
             }, os.path.join(save_dir,f"checkpoint_epoch{epoch}.tar"))
         if num_patience >= patience:
             pass # TODO: forbid early stop
-            break
+            # break
         
     return net
 
