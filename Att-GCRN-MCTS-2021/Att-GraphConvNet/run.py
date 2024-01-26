@@ -44,7 +44,7 @@ def run(config):
     else:
         wandb_logger = None
 
-    main(config, iter(data_generator))
+    main(config, iter(data_generator), wandb_logger)
 
     if wandb_logger is not None:
         wandb_logger.finish()
