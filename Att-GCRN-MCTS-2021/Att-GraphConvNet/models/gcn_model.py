@@ -21,14 +21,14 @@ class ResidualGatedGCNModel(nn.Module):
         # Define net parameters
         self.num_nodes = config.num_nodes
         self.node_dim = config.node_dim
-        self.voc_nodes_in = config['voc_nodes_in']
-        self.voc_nodes_out = config['num_nodes']  # config['voc_nodes_out']
-        self.voc_edges_in = config['voc_edges_in']
-        self.voc_edges_out = config['voc_edges_out']
-        self.hidden_dim = config['hidden_dim']
-        self.num_layers = config['num_layers']
-        self.mlp_layers = config['mlp_layers']
-        self.aggregation = config['aggregation']
+        self.voc_nodes_in = config.voc_nodes_in
+        self.voc_nodes_out = config.num_nodes  # config['voc_nodes_out']
+        self.voc_edges_in = config.voc_edges_in
+        self.voc_edges_out = config.voc_edges_out
+        self.hidden_dim = config.hidden_dim
+        self.num_layers = config.num_layers
+        self.mlp_layers = config.mlp_layers
+        self.aggregation = config.aggregation
         # Node and edge embedding layers/lookups
         self.nodes_coord_embedding = nn.Linear(self.node_dim, self.hidden_dim, bias=False)
         self.edges_values_embedding = nn.Linear(1, self.hidden_dim//2, bias=False)
