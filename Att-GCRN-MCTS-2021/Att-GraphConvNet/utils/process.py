@@ -1,8 +1,9 @@
 import os
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = '1,3'
+# os.environ["CUDA_VISIBLE_DEVICES"] = '1,3'
 import numpy as np
 import torch
+import json
 
 import time
 
@@ -33,7 +34,9 @@ else:
     dtypeLong = torch.LongTensor
     torch.manual_seed(1)
 
-def train_one_epoch(net, optimizer, config, master_bar, num_neighbors = 20):
+def train_one_epoch(net, optimizer, config, data_generator, 
+                    epoch,  master_bar=None, tb_logger=None, wandb_logger=None, num_neighbors=20):
+    
     # Set training mode
     net.train()
 
@@ -41,9 +44,9 @@ def train_one_epoch(net, optimizer, config, master_bar, num_neighbors = 20):
     num_nodes = config.num_nodes
     #num_neighbors = np.random.choice(config.num_neighbors)#config.num_neighbors
     batch_size = config.batch_size
-    batches_per_epoch = config.batches_per_epoch
+    batches_per_epoch = config.batches_per_epoch    # must be specified explicitly
     accumulation_steps = config.accumulation_steps
-    train_filepath = config.train_filepath
+    # train_filepath = config.train_filepath
     # modify
     loss_type = config.loss_type
     num_neg = config.num_neg
@@ -51,17 +54,6 @@ def train_one_epoch(net, optimizer, config, master_bar, num_neighbors = 20):
         gamma = config.gamma
     else:
         gamma = 0
-
-    # Load TSP data
-    
-    dataset = GoogleTSPReader(num_nodes, num_neighbors, batch_size, train_filepath, augmentation = True)
-    if batches_per_epoch != -1:
-        batches_per_epoch = min(batches_per_epoch, dataset.max_iter)
-    else:
-        batches_per_epoch = dataset.max_iter
-
-    # Convert dataset to iterable
-    dataset = iter(dataset)
     
     # Initially set loss class weights as None
     edge_cw = None
@@ -69,7 +61,7 @@ def train_one_epoch(net, optimizer, config, master_bar, num_neighbors = 20):
     # Initialize running data
     running_loss = 0.0
     # running_err_edges = 0.0
-    # running_err_tour = 0.0
+    # running_err_tour = 0.0 
     # running_err_tsp = 0.0
     running_pred_tour_len = 0.0
     running_gt_tour_len = 0.0
@@ -80,7 +72,7 @@ def train_one_epoch(net, optimizer, config, master_bar, num_neighbors = 20):
     for batch_num in progress_bar(range(batches_per_epoch), parent=master_bar):
         # Generate a batch of TSPs
         try:
-            batch = next(dataset)
+            batch = next(data_generator)
         except StopIteration:
             break
 
@@ -131,6 +123,14 @@ def train_one_epoch(net, optimizer, config, master_bar, num_neighbors = 20):
             gt_tour_len=running_gt_tour_len/running_nb_data))
         master_bar.child.comment = result
 
+
+        # TODO: Log to wandb (log results of this batch (not running mean))
+        if wandb_logger is not None and (batch_num+1) % config.log_step == 0:
+            wandb_logger.log({'avg_cost': pred_tour_len,
+                              'actor_loss': loss.item(),
+                              'opt_gap': pred_tour_len/gt_tour_len - 1,})
+
+
     # Compute statistics for full epoch
     loss = running_loss/ running_nb_data
     err_edges = 0 # running_err_edges/ running_nb_data
@@ -139,34 +139,48 @@ def train_one_epoch(net, optimizer, config, master_bar, num_neighbors = 20):
     pred_tour_len = running_pred_tour_len/ running_nb_data
     gt_tour_len = running_gt_tour_len/ running_nb_data
 
-    return time.time()-start_epoch, loss, err_edges, err_tour, err_tsp, pred_tour_len, gt_tour_len
+
+    train_time = time.time()-start_epoch
+    opt_gap = pred_tour_len/gt_tour_len - 1
 
 
-def metrics_to_str(epoch, time, learning_rate, loss, err_edges, err_tour, err_tsp, pred_tour_len, gt_tour_len, num_neighbors=20):
+    # Log to Tensorboard
+    master_bar.write('t: ' + metrics_to_str(epoch, train_time, loss, err_edges, err_tour, err_tsp, pred_tour_len, gt_tour_len, num_neighbors))
+    tb_logger.add_scalar('loss/train_loss', loss, epoch)
+    tb_logger.add_scalar('pred_tour_len/train_pred_tour_len', pred_tour_len, epoch)
+    tb_logger.add_scalar('optimality_gap/train_opt_gap', opt_gap, epoch)
+
+    # return time.time()-start_epoch, loss, err_edges, err_tour, err_tsp, pred_tour_len, gt_tour_len
+    return loss
+
+
+def metrics_to_str(epoch, time, loss, err_edges, err_tour, err_tsp, pred_tour_len, gt_tour_len, num_neighbors=20):
     result = ( 'epoch:{epoch:0>2d}\t'
                'time:{time:.1f}h\t'
-               'lr:{learning_rate:.2e}\t'
+            #    'lr:{learning_rate:.2e}\t'
                'loss:{loss:.4f}\t'
-               # 'err_edges:{err_edges:.2f}\t'
-               # 'err_tour:{err_tour:.2f}\t'
-               # 'err_tsp:{err_tsp:.2f}\t'
+               'err_edges:{err_edges:.2f}\t'
+               'err_tour:{err_tour:.2f}\t'
+               'err_tsp:{err_tsp:.2f}\t'
                'pred_tour_len:{pred_tour_len:.3f}\t'
                'gt_tour_len:{gt_tour_len:.3f}\t'
               'num_neighbors:{num_neighbors:0>2d}'.format(
                    epoch=epoch,
                    time=time/3600,
-                   learning_rate=learning_rate,
+                #    learning_rate=learning_rate,
                    loss=loss,
-                   # err_edges=err_edges,
-                   # err_tour=err_tour,
-                   # err_tsp=err_tsp,
+                   err_edges=err_edges,
+                   err_tour=err_tour,
+                   err_tsp=err_tsp,
                    pred_tour_len=pred_tour_len,
                    gt_tour_len=gt_tour_len,
               num_neighbors=num_neighbors))
     return result
     
     
-def test(net, config, master_bar, mode='test', num_neighbors = 20):
+def test(net, config, mode, dataset, epoch,
+         master_bar, tb_logger=None, wandb_logger=None, num_neighbors = 20):    
+    
     # Set evaluation mode
     net.eval()
 
@@ -176,8 +190,8 @@ def test(net, config, master_bar, mode='test', num_neighbors = 20):
     batch_size = config.batch_size
     batches_per_epoch = config.batches_per_epoch
     beam_size = config.beam_size
-    val_filepath = config.val_filepath
-    test_filepath = config.test_filepath
+    # val_filepath = config.val_filepath
+    # test_filepath = config.test_filepath
     # modify
     num_neg = config.num_neg
     loss_type = config.loss_type
@@ -187,10 +201,6 @@ def test(net, config, master_bar, mode='test', num_neighbors = 20):
         gamma = 0
 
     # Load TSP data
-    if mode == 'val':
-        dataset = GoogleTSPReader(num_nodes, num_neighbors, batch_size=batch_size, filepath=val_filepath)
-    elif mode == 'test':
-        dataset = GoogleTSPReader(num_nodes, num_neighbors, batch_size=batch_size, filepath=test_filepath)
     batches_per_epoch = dataset.max_iter
 
     # Convert dataset to iterable
@@ -277,15 +287,42 @@ def test(net, config, master_bar, mode='test', num_neighbors = 20):
     err_tsp = 0 # running_err_tsp/ running_nb_data
     pred_tour_len = running_pred_tour_len/ running_nb_data
     gt_tour_len = running_gt_tour_len/ running_nb_data
+    opt_gap = pred_tour_len/gt_tour_len - 1
 
-    return time.time()-start_test, loss, err_edges, err_tour, err_tsp, pred_tour_len, gt_tour_len
+    val_time = time.time()- start_test
+
+    master_bar.write('v: ' + metrics_to_str(epoch, val_time, loss, err_edges, err_tour, err_tsp, pred_tour_len, gt_tour_len, num_neighbors))
+    tb_logger.add_scalar('loss/val_loss', loss, epoch)
+    tb_logger.add_scalar('pred_tour_len/val_pred_tour_len', pred_tour_len, epoch)
+    tb_logger.add_scalar('optimality_gap/val_opt_gap', opt_gap, epoch)
+
+    if wandb_logger is not None:
+        wandb_logger.log({'val_avg_reward': pred_tour_len, 'epoch': epoch})
+
+
+    return loss, pred_tour_len
+
     
-def main(config, pretrained = False, patience = 1, lr_scale = 1., pretrained_path = None,
-        var_neighbor = 5, random_neighbor = True, netname = 'att-gcn'):
+def main(config, data_generator, wandb_logger=None):
     # Instantiate the network
 #     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 #     os.environ["CUDA_VISIBLE_DEVICES"] = str(config.gpu_id)  
-    net = nn.DataParallel(ResidualGatedGCNModel(config, dtypeFloat, dtypeLong))
+    
+    pretrained = config.pretrained  # False
+    patience = config.patience  # 1
+    lr_scale = config.lr_scale  # 1.
+    pretrained_path = config.pretrained_path    # None
+    var_neighbor = config.var_neighbor      # 5
+    random_neighbor = config.random_neighbor    # True
+    netname = config.netname    # 'att-gcn'
+    
+    if netname == 'att-gcn':
+        net = ResidualGatedGCNModel(config, dtypeFloat, dtypeLong)
+    else:
+        raise ValueError('Network name not recognized')
+    
+    net = nn.DataParallel(net)
+
     if torch.cuda.is_available():
         net.cuda()
     if pretrained:
@@ -308,12 +345,13 @@ def main(config, pretrained = False, patience = 1, lr_scale = 1., pretrained_pat
     print('Number of parameters:', nb_param)
  
     # Create log directory
-    tmp_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    tmp_time = '{}-{}'.format(netname, tmp_time)
-    log_dir = f"./logs/{config.expt_name}/{tmp_time}/" 
+    log_dir = config.log_dir
+    save_dir = config.save_dir
     os.makedirs(log_dir, exist_ok=True)
-    json.dump(config, open(f"{log_dir}/config.json", "w"), indent=4)
-    writer = SummaryWriter(log_dir)  # Define Tensorboard writer
+    os.makedirs(save_dir, exist_ok=True)
+
+    json.dump(vars(config), open(f"{save_dir}/config.json", "w"), indent=4)
+    tb_logger = SummaryWriter(log_dir)  # Define Tensorboard writer
 
     # Training parameters
     #batch_size = config.batch_size
@@ -337,6 +375,13 @@ def main(config, pretrained = False, patience = 1, lr_scale = 1., pretrained_pat
 #                                 momentum=0.9, weight_decay=0.0005)
     print(optimizer)
     
+
+    # load validate dataset
+    val_dataset = GoogleTSPReader(
+        num_nodes=config.num_nodes, num_neighbors=config.num_neighbors,
+        batch_size=config.batch_size, filepath=config.val_filepaths, shuffled=False
+    )
+
     epoch_bar = master_bar(range(max_epochs))
     for epoch in epoch_bar:
         # Log to Tensorboard
@@ -345,22 +390,17 @@ def main(config, pretrained = False, patience = 1, lr_scale = 1., pretrained_pat
                 num_neighbors = np.random.choice(config.num_neighbors)
         else:
             num_neighbors = config.num_neighbors
-        writer.add_scalar('learning_rate', learning_rate, epoch)
+        tb_logger.add_scalar('learning_rate', learning_rate, epoch)
         
         # Train
-        train_time, train_loss, train_err_edges, train_err_tour, train_err_tsp, train_pred_tour_len, train_gt_tour_len = train_one_epoch(net, optimizer, config, epoch_bar, num_neighbors)
-        epoch_bar.write('t: ' + metrics_to_str(epoch, train_time, learning_rate, train_loss, train_err_edges, train_err_tour, train_err_tsp, train_pred_tour_len, train_gt_tour_len, num_neighbors))
-        writer.add_scalar('loss/train_loss', train_loss, epoch)
-        writer.add_scalar('pred_tour_len/train_pred_tour_len', train_pred_tour_len, epoch)
-        writer.add_scalar('optimality_gap/train_opt_gap', train_pred_tour_len/train_gt_tour_len - 1, epoch)
+        train_loss = train_one_epoch(net, optimizer, config, data_generator, epoch, 
+                        epoch_bar, tb_logger, wandb_logger, num_neighbors)
+
 
         if epoch % val_every == 0 or epoch == max_epochs-1:
             # Validate
-            val_time, val_loss, val_err_edges, val_err_tour, val_err_tsp, val_pred_tour_len, val_gt_tour_len = test(net, config, epoch_bar, mode='val', num_neighbors = num_neighbors)
-            epoch_bar.write('v: ' + metrics_to_str(epoch, val_time, learning_rate, val_loss, val_err_edges, val_err_tour, val_err_tsp, val_pred_tour_len, val_gt_tour_len, num_neighbors))
-            writer.add_scalar('loss/val_loss', val_loss, epoch)
-            writer.add_scalar('pred_tour_len/val_pred_tour_len', val_pred_tour_len, epoch)
-            writer.add_scalar('optimality_gap/val_opt_gap', val_pred_tour_len/val_gt_tour_len - 1, epoch)
+            val_loss, val_pred_tour_len = test(net, config, 'val', val_dataset, epoch,
+                            epoch_bar, tb_logger, wandb_logger, num_neighbors = num_neighbors)
             
             # Save checkpoint
             if val_pred_tour_len < best_pred_tour_len:
@@ -371,7 +411,7 @@ def main(config, pretrained = False, patience = 1, lr_scale = 1., pretrained_pat
                     'optimizer_state_dict': optimizer.state_dict(),
                     'train_loss': train_loss,
                     'val_loss': val_loss,
-                }, log_dir+"best_val_checkpoint_{}.tar".format(epoch))
+                }, os.path.join(save_dir,"best_val_checkpoint_{}.tar".format(epoch)))
             
             # Update learning rate
             if val_loss > 0.99 * val_loss_old:
@@ -402,18 +442,19 @@ def main(config, pretrained = False, patience = 1, lr_scale = 1., pretrained_pat
             'optimizer_state_dict': optimizer.state_dict(),
             'train_loss': train_loss,
             'val_loss': val_loss,
-        }, log_dir+"last_train_checkpoint.tar")
+        }, os.path.join(save_dir,"last_train_checkpoint.tar"))
         
         # Save checkpoint after every 250 epochs
-        if epoch != 0 and (epoch % 250 == 0 or epoch == max_epochs-1):
+        if epoch != 0 and (epoch % config.checkpoint_epochs == 0 or epoch == max_epochs-1):
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': net.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
+                # 'optimizer_state_dict': optimizer.state_dict(),
                 'train_loss': train_loss,
                 'val_loss': val_loss,
-            }, log_dir+f"checkpoint_epoch{epoch}.tar")
+            }, os.path.join(save_dir,f"checkpoint_epoch{epoch}.tar"))
         if num_patience >= patience:
+            pass # TODO: forbid early stop
             break
         
     return net
