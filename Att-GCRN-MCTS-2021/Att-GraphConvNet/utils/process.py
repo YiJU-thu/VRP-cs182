@@ -125,7 +125,7 @@ def train_one_epoch(net, optimizer, config, data_generator,
 
 
         # TODO: Log to wandb (log results of this batch (not running mean))
-        if wandb_logger is not None and (batch_num+1) % config.log_step == 0:
+        if (wandb_logger is not None) and ((batch_num+1) % config.log_step == 0):
             wandb_logger.log({'avg_cost': pred_tour_len,
                               'actor_loss': loss.item(),
                               'opt_gap': pred_tour_len/gt_tour_len - 1,})
