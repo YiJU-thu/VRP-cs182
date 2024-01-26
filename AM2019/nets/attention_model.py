@@ -57,6 +57,8 @@ class AttentionModel(nn.Module):
                  encode_original_edge=False,
                  rescale_dist=False,
                  update_context_node=False,
+                 aug_graph_embed=False, 
+                 # NOTE: this is due to a previous mistake. we should always set it as true, while this may ruin the previous trained models
                  n_encode_layers=2,
                  tanh_clipping=10.,
                  mask_inner=True,
@@ -104,6 +106,7 @@ class AttentionModel(nn.Module):
         self.n_edge_encode_layers = n_edge_encode_layers
         self.encode_original_edge = encode_original_edge
         self.rescale_dist = rescale_dist
+        self.aug_graph_embed = aug_graph_embed
 
         # assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
         # if only_distance:
@@ -209,7 +212,7 @@ class AttentionModel(nn.Module):
 
         assert self.checkpoint_encoder == False, "Yifan hasn't implemented checkpoint :("
         if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
-            embeddings, _ = checkpoint(self.embedder, self._init_embed(input))
+            embeddings, graph_embed = checkpoint(self.embedder, self._init_embed(input))
         else:
             # init_embed: (batch_size, graph_size, embedding_dim) - h^0_i's
             # S: (batch_size, graph_size, rank_k_approx) - first k singular values of the (rel) distance matrix
@@ -222,9 +225,9 @@ class AttentionModel(nn.Module):
             
             scale_factors = None if not self.rescale_dist else input['scale_factors']
             
-            embeddings, _ = self.embedder(init_embed, S, scale_factors=scale_factors, edge_matrix=edge_matrix)
+            embeddings, graph_embed = self.embedder(init_embed, S, scale_factors=scale_factors, edge_matrix=edge_matrix)
 
-        _log_p, pi = self._inner(input, embeddings, force_steps=force_steps)
+        _log_p, pi = self._inner(input, embeddings, graph_embed=graph_embed, force_steps=force_steps)
 
         for i in range(force_steps):
             assert pi[:, i].eq(i).all(), "Forced output incorrect"
@@ -242,10 +245,10 @@ class AttentionModel(nn.Module):
         return self.problem.beam_search(*args, **kwargs, model=self)
 
     def precompute_fixed(self, input):
-        embeddings, _ = self.embedder(self._init_embed(input))
+        embeddings, graph_embed = self.embedder(self._init_embed(input))
         # Use a CachedLookup such that if we repeatedly index this object with the same index we only need to do
         # the lookup once... this is the case if all elements in the batch have maximum batch size
-        return CachedLookup(self._precompute(embeddings))
+        return CachedLookup(self._precompute(embeddings, graph_embed))
 
     def propose_expansions(self, beam, fixed, expand_size=None, normalize=False, max_calc_batch_size=4096):
         # First dim = batch_size * cur_beam_size
@@ -351,7 +354,7 @@ class AttentionModel(nn.Module):
             return self.init_embed(nodes), Sk
 
       
-    def _inner(self, input, embeddings, force_steps=0):
+    def _inner(self, input, embeddings, graph_embed=None, force_steps=0):
 
         outputs = []
         sequences = []
@@ -359,7 +362,7 @@ class AttentionModel(nn.Module):
         state = self.problem.make_state(input)
 
         # Compute keys, values for the glimpse and keys for the logits once as they can be reused in every step
-        fixed = self._precompute(embeddings)
+        fixed = self._precompute(embeddings, graph_embed=graph_embed)
         glimpse = embeddings.mean(1)
 
         batch_size = state.ids.size(0)
@@ -450,10 +453,10 @@ class AttentionModel(nn.Module):
             assert False, "Unknown decode type"
         return selected
 
-    def _precompute(self, embeddings, num_steps=1):
+    def _precompute(self, embeddings, graph_embed=None, num_steps=1):
 
         # The fixed context projection of the graph embedding is calculated only once for efficiency
-        graph_embed = embeddings.mean(1)
+        graph_embed = embeddings.mean(1) if (graph_embed is None or not self.aug_graph_embed) else graph_embed
         # fixed context = (batch_size, 1, embed_dim) to make broadcastable with parallel timesteps
         fixed_context = self.project_fixed_context(graph_embed)[:, None, :]
 
