@@ -285,3 +285,45 @@ class GoogleTSPReader(object):
         batch.tour_nodes = np.stack(batch_tour_nodes, axis=0)
         batch.tour_len = np.stack(batch_tour_len, axis=0)
         return batch
+    
+
+class BatchIterator():
+    """
+    Iterator that automatically switches between multiple dataset files.
+    Throughout the training process, the iterator only needs to be initialized once.
+    TODO: implement an offset to continue training from a certain point
+    """
+
+    def __init__(self, filepaths: list, num_nodes: int, num_neighbors: int, batch_size: int, 
+                    shuffled: bool = True, augmentation: bool = False, aug_prob: float = 0.9):
+        """
+        args:
+            See GoogleTSPReader
+            filepaths: list of filepaths to dataset files (.txt or .pkl), either a string or a tuple of strings
+        """
+
+        self.num_nodes = num_nodes
+        self.num_neighbors = num_neighbors
+        self.batch_size = batch_size
+        self.shuffled = shuffled
+        self.augmentation = augmentation
+        self.aug_prob = aug_prob
+
+        self.filepaths = filepaths
+        self.file_idx = 0
+        self.dataset = iter(GoogleTSPReader(num_nodes, num_neighbors, batch_size, filepaths[self.file_idx], shuffled, augmentation, aug_prob))
+    
+    def __iter__(self):
+        while True:
+            batch = next(self.dataset, None)
+            if batch is None:
+                self.file_idx = (self.file_idx + 1) % len(self.filepaths)
+                fn = self.filepaths[self.file_idx]
+                if isinstance(fn, tuple):
+                    fn = fn[0]
+                fn = fn.split('/')[-1].split('.')[0]
+                print(f"switching to file [{fn}]")
+
+                self.dataset = iter(GoogleTSPReader(self.num_nodes, self.num_neighbors, self.batch_size, self.filepaths[self.file_idx], self.shuffled, self.augmentation, self.aug_prob))
+                batch = next(self.dataset, None)
+            yield batch
