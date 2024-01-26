@@ -43,6 +43,8 @@ def get_options(args=None):
     parser.add_argument('--update_context_node', action='store_true', help='if True, use the context node instead of graph embedding for next step context node')
     parser.add_argument('--shpp', action='store_true', help='if True, train in SHPP mode: fix the first two steps')
     parser.add_argument('--shpp_skip', type=int, default=5, help='when training with SHPP, train original TSP every shpp_skip batches. 0 means inf')
+    parser.add_argument('--aug_graph_embed', action='store_true', help='this is due to a previous mistake. we should always set it as true, while this may ruin the previous trained models')
+
 
     # Training
     parser.add_argument('--lr_model', type=float, default=1e-4, help="Set the learning rate for the actor network")

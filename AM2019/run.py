@@ -94,6 +94,7 @@ def run(opts):
         n_edge_encode_layers=opts.n_edge_encode_layers,
         encode_original_edge=opts.encode_original_edge,
         update_context_node=opts.update_context_node,
+        aug_graph_embed=opts.aug_graph_embed,
         n_encode_layers=opts.n_encode_layers,
         mask_inner=True,
         mask_logits=True,
