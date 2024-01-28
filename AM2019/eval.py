@@ -144,10 +144,6 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                     batch_rep = 1
                     iter_rep = 1
 
-                    # "greedy" do not use sample_many
-                    costs, ll, sequences = model(batch, return_pi=True)
-                    # return sequences, cost  # FIXME: wierd approach to make things work ... 
-
 
                 elif width * opts.eval_batch_size > opts.max_calc_batch_size:
                     assert opts.eval_batch_size == 1
@@ -157,11 +153,11 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                 else:
                     batch_rep = width
                     iter_rep = 1
-                # assert batch_rep > 0
-                # # This returns (batch_size, iter_rep shape)
-                # sequences, costs = model.sample_many(batch, batch_rep=batch_rep, iter_rep=iter_rep)
-                # batch_size = len(costs)
-                # ids = torch.arange(batch_size, dtype=torch.int64, device=costs.device)
+                assert batch_rep > 0
+                # This returns (batch_size, iter_rep shape)
+                sequences, costs = model.sample_many(batch, batch_rep=batch_rep, iter_rep=iter_rep)
+                batch_size = len(costs)
+                ids = torch.arange(batch_size, dtype=torch.int64, device=costs.device)
             else:
                 assert opts.decode_strategy == 'bs'
 
@@ -172,18 +168,18 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                 )
 
         # FIXME: this is a hack to make things work
-        # if sequences is None:
-        #     sequences = [None] * batch_size
-        #     costs = [math.inf] * batch_size
-        # else:
-        #     sequences, costs = get_best(
-        #         sequences.cpu().numpy(), costs.cpu().numpy(),
-        #         ids.cpu().numpy() if ids is not None else None,
-        #         batch_size
-        #     )
+        if sequences is None:
+            sequences = [None] * batch_size
+            costs = [math.inf] * batch_size
+        else:
+            sequences, costs = get_best(
+                sequences.cpu().numpy(), costs.cpu().numpy(),
+                ids.cpu().numpy() if ids is not None else None,
+                batch_size
+            )
         
-        sequences = sequences.cpu().numpy()
-        costs = costs.cpu().numpy()
+        # sequences = sequences.cpu().numpy()
+        # costs = costs.cpu().numpy()
 
         duration = time.time() - start
         for seq, cost in zip(sequences, costs):

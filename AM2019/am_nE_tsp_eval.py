@@ -60,7 +60,7 @@ def load_rnd_dataset(dataset_path, rnd_dist):
     assert "distance" in dataset.keys()
     if rnd_dist == 'standard' and dataset.get('scale_factors') is not None:
         dataset['scale_factors'] = None
-    else:
+    elif rnd_dist == 'complex':
         assert dataset.get('scale_factors') is not None
     return dataset
 

@@ -189,7 +189,26 @@ class AttentionModel(nn.Module):
         :return:
         """
 
-        # Yi: add sanity check for input
+        embeddings, graph_embed = self.get_init_embed(input)    # packed together so it's easy to be called by sample_many, etc...
+
+        _log_p, pi = self._inner(input, embeddings, graph_embed=graph_embed, force_steps=force_steps)
+
+        for i in range(force_steps):
+            assert pi[:, i].eq(i).all(), "Forced output incorrect"
+        
+        cost, mask = self.problem.get_costs(input, pi)
+        # Log likelyhood is calculated within the model since returning it per action does not work well with
+        # DataParallel since sequences can be of different lengths
+        ll = self._calc_log_likelihood(_log_p, pi, mask, force_steps=force_steps)
+        if return_pi:
+            return cost, ll, pi
+
+        return cost, ll
+
+
+    def get_init_embed(self, input):
+        
+        # add sanity check for input
         assert isinstance(input, dict), "Input must be a dictionary"
         assert 'coords' in input, "Input must contain 'coords' key"
         I, N, _ = input['coords'].shape
@@ -226,26 +245,14 @@ class AttentionModel(nn.Module):
             scale_factors = None if not self.rescale_dist else input['scale_factors']
             
             embeddings, graph_embed = self.embedder(init_embed, S, scale_factors=scale_factors, edge_matrix=edge_matrix)
+        return embeddings, graph_embed
 
-        _log_p, pi = self._inner(input, embeddings, graph_embed=graph_embed, force_steps=force_steps)
-
-        for i in range(force_steps):
-            assert pi[:, i].eq(i).all(), "Forced output incorrect"
-        
-        cost, mask = self.problem.get_costs(input, pi)
-        # Log likelyhood is calculated within the model since returning it per action does not work well with
-        # DataParallel since sequences can be of different lengths
-        ll = self._calc_log_likelihood(_log_p, pi, mask, force_steps=force_steps)
-        if return_pi:
-            return cost, ll, pi
-
-        return cost, ll
 
     def beam_search(self, *args, **kwargs):
         return self.problem.beam_search(*args, **kwargs, model=self)
 
     def precompute_fixed(self, input):
-        embeddings, graph_embed = self.embedder(self._init_embed(input))
+        embeddings, graph_embed = self.get_init_embed(input)
         # Use a CachedLookup such that if we repeatedly index this object with the same index we only need to do
         # the lookup once... this is the case if all elements in the batch have maximum batch size
         return CachedLookup(self._precompute(embeddings, graph_embed))
@@ -427,7 +434,7 @@ class AttentionModel(nn.Module):
         return sample_many(
             lambda input: self._inner(*input),  # Need to unpack tuple into arguments
             lambda input, pi: self.problem.get_costs(input[0], pi),  # Don't need embeddings as input to get_costs
-            (input, self.embedder(self._init_embed(input))[0]),  # Pack input with embeddings (additional input)
+            (input, *self.get_init_embed(input)),  # Pack input with embeddings (additional input)
             batch_rep, iter_rep
         )
 
@@ -475,7 +482,7 @@ class AttentionModel(nn.Module):
         return AttentionModelFixed(embeddings, fixed_context, *fixed_attention_node_data)
 
     def _get_log_p_topk(self, fixed, state, k=None, normalize=True):
-        log_p, _ = self._get_log_p(fixed, state, normalize=normalize)
+        log_p, mask, glimpse = self._get_log_p(fixed, state, normalize=normalize)
 
         # Return topk
         if k is not None and k < log_p.size(-1):
