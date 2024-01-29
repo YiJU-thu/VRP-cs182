@@ -322,13 +322,14 @@ class AttentionModel(nn.Module):
     def _init_embed(self, input):        
         # svd and add node features, then go through the linear layer
         coords = input['coords']
+        I, N, _ = coords.shape
         if self.rank_k_approx == 0:
             nodes = coords
             Sk = torch.zeros(coords.shape[0], 0, device=coords.device)   # shape (batch_size, 0)
         else:
             mat_to_svd = input['distance'] if self.svd_original_edge else input['rel_distance']
 
-            if self.full_svd:
+            if self.full_svd or self.rank_k_approx/N > 0.6:
                 U, S, Vh = torch.linalg.svd(mat_to_svd)
                 V = Vh.mH
                 Uk, Sk, Vk = U[..., :self.rank_k_approx], S[..., :self.rank_k_approx], V[..., :self.rank_k_approx]
@@ -346,6 +347,12 @@ class AttentionModel(nn.Module):
             if self.mul_sigma_uv:
                 sqrt_S = torch.sqrt(Sk[:, None, :])
                 Uk, Vk = Uk * sqrt_S, Vk * sqrt_S
+
+            if self.rank_k_approx > N:
+                # pad Uk, Vk, Sk with zeros
+                Uk = torch.cat([Uk, torch.zeros(Uk.shape[0], Uk.shape[2], self.rank_k_approx-N, device=Uk.device)], dim=2)
+                Vk = torch.cat([Vk, torch.zeros(Vk.shape[0], Vk.shape[2], self.rank_k_approx-N, device=Vk.device)], dim=2)
+                Sk = torch.cat([Sk, torch.zeros(Sk.shape[0], self.rank_k_approx-N, device=Sk.device)], dim=1)
 
             if self.only_distance:
                 nodes = torch.cat([Uk, Vk], dim=2)
@@ -372,7 +379,7 @@ class AttentionModel(nn.Module):
                 1
             ), Sk
         else: #TSP
-            assert nodes.shape == (coords.shape[0], coords.shape[1], 2*(1-self.only_distance) + 2 * self.rank_k_approx)
+            assert nodes.shape == (coords.shape[0], coords.shape[1], 2*(1-self.only_distance) + 2 * self.rank_k_approx), "nodes.shape is {}".format(nodes.shape)
             return self.init_embed(nodes), Sk
 
       

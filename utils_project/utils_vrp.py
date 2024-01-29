@@ -320,13 +320,16 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
 
     rescale_factors_dim = 3 if non_Euc else 1
     if rescale:
-        # sd = 0.5 -> 50% between exp(-0.5) and exp(0.5), i.e., (0.61, 1.65)
+        # sd = 0.5 -> 50% between exp(-0.5) and exp(0.5), i.e., (0.61, 1.65), 95%: (0.22, 4.48)
         to_concat = []
         r_y_factors = LogNormal(torch.tensor(0.0), torch.tensor(0.5)).sample(sample_shape=(num_graphs, 1))
+        r_y_factors.clamp_(0.2, 4.5)    # 3 * sigma
         to_concat.append(r_y_factors)
         if non_Euc:
             sym_factors = LogNormal(torch.tensor(0.0), torch.tensor(0.1)).sample(sample_shape=(num_graphs, 1))
             asym_factors = Normal(torch.tensor(0.0), torch.tensor(0.5)).sample(sample_shape=(num_graphs, 1))
+            sym_factors.clamp_(0.55, 1.82)    # 6 * sigma
+            asym_factors.clamp_(-3.0, 3.0)  # 6 * sigma
             to_concat.append(sym_factors)
             to_concat.append(asym_factors)
         scale_factors = torch.cat(to_concat, dim=1)
@@ -363,6 +366,7 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
         asym_rel_dist_mat = asym_std * np.sqrt(0.5) * (asym - asym.permute(0, 2, 1))
 
         relative_dist_matrix = sym_rel_dist_mat * torch.maximum(1 + asym_rel_dist_mat, torch.tensor(0.0))
+        relative_dist_matrix.clamp_(0, 10)
         assert relative_dist_matrix.shape == (num_graphs, n, n)
 
         distance_matrix = relative_dist_matrix * euclidean_distance_matrix
@@ -448,7 +452,7 @@ def scale_graph(data, sym_std=0.5, asym_std=0.05):
     rel_asym = (dist_mat_rel - rel_sym) / rel_sym
 
     if mode=="recover":
-        # note: scale_factors is actually, e.g., actual_sym_std / sym_std, NOT actual_sym_std
+        # note: scale_factors is (actual_sym_std / sym_std), NOT actual_sym_std
         sym_factor = data["scale_factors"][:,1]
         asym_factor = data["scale_factors"][:,2]
         assert sym_factor.shape == (I,)
