@@ -9,8 +9,8 @@ import torch
 import torch.optim as optim
 from tensorboard_logger import Logger as TbLogger
 
-from utils.process import main
-from utils.google_tsp_reader import BatchIterator
+from gcn_utils.process import main
+from gcn_utils.google_tsp_reader import BatchIterator
 
 from loguru import logger
 
@@ -76,11 +76,9 @@ def get_options(args=None):
     parser.add_argument('--voc_nodes_out', type=int, default=2, help='Number of node features')
     parser.add_argument('--voc_edges_in', type=int, default=3, help='Number of edge features')
     parser.add_argument('--voc_edges_out', type=int, default=2, help='Number of edge features')
+    
+    # general model training setting
     parser.add_argument('--beam_size', type=int, default=1280, help='Beam size for beam search')
-    parser.add_argument('--hidden_dim', type=int, default=300, help='Hidden dimension')
-    parser.add_argument('--num_layers', type=int, default=30, help='Number of GCN layers')
-    parser.add_argument('--mlp_layers', type=int, default=3, help='Number of MLP layers')
-    parser.add_argument('--aggregation', type=str, default='mean', help='Aggregation function for node features')
     parser.add_argument('--max_epochs', type=int, default=1500, help='Maximum number of epochs')
     parser.add_argument('--val_every', type=int, default=1, help='Validation frequency')
     parser.add_argument('--test_every', type=int, default=100, help='Test frequency')
@@ -93,9 +91,32 @@ def get_options(args=None):
     parser.add_argument('--gamma', type=float, default=1, help='Gamma for Focal Loss')
     parser.add_argument('--loss_type', type=str, default='FL', help='Loss type')
     parser.add_argument('--aug_prob', type=float, default=1.00, help='Augmentation probability')
-
-
-    # TODO: Attention Edge encoding parameters
+    
+    # att-gcn
+    parser.add_argument('--hidden_dim', type=int, default=300, help='Hidden dimension')
+    parser.add_argument('--num_layers', type=int, default=30, help='Number of GCN layers')
+    parser.add_argument('--mlp_layers', type=int, default=3, help='Number of MLP layers')
+    parser.add_argument('--aggregation', type=str, default='mean', help='Aggregation function for node features')
+    
+    # am
+    parser.add_argument('--embedding_dim', type=int, default=128, help='Dimension of input embedding')
+    # parser.add_argument('--hidden_dim', type=int, default=128, help='Dimension of hidden layers in Enc/Dec')
+    parser.add_argument('--n_encode_layers', type=int, default=3,
+                        help='Number of layers in the encoder/critic network')
+    parser.add_argument('--tanh_clipping', type=float, default=10.,
+                        help='Clip the parameters to within +- this value using tanh. '
+                             'Set to 0 to not perform any clipping.')
+    parser.add_argument('--normalization', default='batch', help="Normalization type, 'batch' (default) or 'instance'")
+    parser.add_argument('--rank_k_approx', type=int, default=0, help='compute rank k-approx of dist matrix to argument node features')
+    parser.add_argument('--n_edge_encode_layers', type=int, default=0, help='add edge matrix encodings to the first n attention layers')
+    parser.add_argument('--encode_original_edge', action='store_true', help='if not, encode the relative distance matrix')
+    parser.add_argument('--svd_original_edge', action='store_true', help='if not, do SVD on the relative distance matrix')
+    parser.add_argument('--full_svd', action='store_true', help='if not, use randomized algorithm to perform faster SVD')
+    parser.add_argument('--mul_sigma_uv', action='store_true', help='if True, add sqrt(sigma) u, sqrt(sigma) v to the node features')
+    parser.add_argument('--only_distance', action='store_true', help='if True, do not use coordinates in the model') # compatible with rank_k_approx > 0 & svd_original_edge = True
+    parser.add_argument('--rand_dist', type=str, default='standard', help='"standard" or "complex"') # FIXME: can be combined with data_distribution
+    parser.add_argument('--rescale_dist', action='store_true', help='if rand_dist is not standard, whether to rescale it to standard')
+    
 
     parser.add_argument('--patience', type=int, default=1, help='Patience for early stopping')
     parser.add_argument('--lr_scale', type=float, default=1., help='Learning rate scale for pretrained model')

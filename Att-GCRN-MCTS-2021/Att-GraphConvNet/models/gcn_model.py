@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 
 from models.gcn_layers import ResidualGatedGCNLayer, MLP
-from utils.model_utils import *
+from gcn_utils.model_utils import *
 
 
 class ResidualGatedGCNModel(nn.Module):
@@ -42,7 +42,7 @@ class ResidualGatedGCNModel(nn.Module):
         self.mlp_edges = MLP(self.hidden_dim, self.voc_edges_out, self.mlp_layers)
         # self.mlp_nodes = MLP(self.hidden_dim, self.voc_nodes_out, self.mlp_layers)
 
-    def forward(self, x_edges, x_edges_values, x_nodes, x_nodes_coord, y_edges,
+    def forward(self, x_edges, x_edges_values, x_rel_edges_values, x_scale_factors, x_nodes, x_nodes_coord, y_edges,
                 edge_cw, num_neg = 4, loss_type = "CE", gamma = 1):
         """
         Args:

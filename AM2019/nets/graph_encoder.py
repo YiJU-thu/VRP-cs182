@@ -29,10 +29,13 @@ class MultiHeadAttention(nn.Module):
             embed_dim,
             val_dim=None,
             key_dim=None,
-            encode_edge_matrix=False
+            encode_edge_matrix=False,
+            return_u_mat=False
     ):
         super(MultiHeadAttention, self).__init__()
 
+        self.return_u_mat = return_u_mat
+        
         if val_dim is None:
             val_dim = embed_dim // n_heads
         if key_dim is None:
@@ -48,9 +51,10 @@ class MultiHeadAttention(nn.Module):
 
         self.W_query = nn.Parameter(torch.Tensor(n_heads, input_dim, key_dim))
         self.W_key = nn.Parameter(torch.Tensor(n_heads, input_dim, key_dim))
-        self.W_val = nn.Parameter(torch.Tensor(n_heads, input_dim, val_dim))
-
-        self.W_out = nn.Parameter(torch.Tensor(n_heads, val_dim, embed_dim))
+        
+        if not return_u_mat:
+            self.W_val = nn.Parameter(torch.Tensor(n_heads, input_dim, val_dim))
+            self.W_out = nn.Parameter(torch.Tensor(n_heads, val_dim, embed_dim))
 
         self.encode_edge_matrix = encode_edge_matrix
         if encode_edge_matrix:
@@ -97,7 +101,6 @@ class MultiHeadAttention(nn.Module):
         Q = torch.matmul(qflat, self.W_query).view(shp_q)
         # Calculate keys and values (n_heads, batch_size, graph_size, key/val_size)
         K = torch.matmul(hflat, self.W_key).view(shp)
-        V = torch.matmul(hflat, self.W_val).view(shp)
 
         # Calculate compatibility (n_heads, batch_size, n_query, graph_size)
         compatibility = self.norm_factor * torch.matmul(Q, K.transpose(2, 3))
@@ -124,6 +127,11 @@ class MultiHeadAttention(nn.Module):
             attnc = attn.clone()
             attnc[mask] = 0
             attn = attnc
+        
+        if self.return_u_mat:
+            return attn
+
+        V = torch.matmul(hflat, self.W_val).view(shp)
 
         heads = torch.matmul(attn, V)
 
@@ -185,7 +193,20 @@ class MultiHeadAttentionLayer(nn.Sequential):
             encode_edge_matrix=False,
             feed_forward_hidden=512,
             normalization='batch',
+            return_u_mat=False
     ):
+        if return_u_mat:    # return the compatibility matrix
+            super(MultiHeadAttentionLayer, self).__init__(
+                MultiHeadAttention(
+                    n_heads,
+                    input_dim=embed_dim,
+                    embed_dim=embed_dim,
+                    encode_edge_matrix=encode_edge_matrix,
+                    return_u_mat=True
+                )
+            )
+            return
+
         super(MultiHeadAttentionLayer, self).__init__(
             SkipConnection(
                 MultiHeadAttention(
@@ -221,9 +242,14 @@ class GraphAttentionEncoder(nn.Module):
             rescale_dist=False,
             node_dim=None,
             normalization='batch',
-            feed_forward_hidden=512
+            feed_forward_hidden=512,
+            return_u_mat=False
     ):
         super(GraphAttentionEncoder, self).__init__()
+
+        self.return_u_mat = return_u_mat
+        # if True, return the last compatability matrix
+        # if False, return (node embeddings, graph embedding)
 
         # To map input to embedding space
         self.init_embed = nn.Linear(node_dim, embed_dim) if node_dim is not None else None
@@ -233,7 +259,8 @@ class GraphAttentionEncoder(nn.Module):
         # if n_edge_encode_layers <= 1:
         self.layers = nn.Sequential(*(
             MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden=feed_forward_hidden, 
-                                    normalization=normalization, encode_edge_matrix=(i < n_edge_encode_layers))
+                                    normalization=normalization, encode_edge_matrix=(i < n_edge_encode_layers),
+                                    return_u_mat=((i == n_layers-1) and return_u_mat))
             for i in range(n_layers)
         ))
         # else:
@@ -254,7 +281,12 @@ class GraphAttentionEncoder(nn.Module):
             scale_factors_dim = 0        
         graph_embed_layers = 3  # TODO: make this a parameter
         add_graph_dim = rank_k_approx + scale_factors_dim
-        self.graph_embed = MLP(embed_dim+add_graph_dim, [embed_dim for _ in range(graph_embed_layers)])
+        self.add_graph_dim = add_graph_dim
+
+        if not return_u_mat:
+            self.graph_embed = MLP(embed_dim+add_graph_dim, [embed_dim for _ in range(graph_embed_layers)])
+        else:
+            self.u_mat_embed = MLP(n_heads+add_graph_dim, [embed_dim for _ in range(graph_embed_layers)]+[2])
 
     def forward(self, x, S, scale_factors=None, mask=None, edge_matrix=None):
 
@@ -277,18 +309,42 @@ class GraphAttentionEncoder(nn.Module):
         #     assert isinstance(self.layers, nn.Sequential)
         #     h = self.layers[0]((h, {"edge_matrix":edge_matrix}))
 
-        # the embedding of the graph is the concatenation of the average of h, the first k singular values
-        # (and scale_dist if rescale_dist is True) going through a linear layer
-        # (batch_size, embed_dim)
-        if self.rescale_dist:
-            assert scale_factors is not None, "rescale_dist=True but scale_dist is None"
-            graph_init_embed = torch.cat([h.mean(dim=1), S, scale_factors], dim=1)
-        else:
-            graph_init_embed = torch.cat([h.mean(dim=1), S], dim=1)
-        graph_embedding = self.graph_embed(graph_init_embed)
-            
+        
+        
+        if not self.return_u_mat:
+            # the embedding of the graph is the concatenation of the average of h, the first k singular values
+            # (and scale_dist if rescale_dist is True) going through a linear layer
+            # (batch_size, embed_dim)
+            if self.rescale_dist:
+                assert scale_factors is not None, "rescale_dist=True but scale_dist is None"
+                graph_init_embed = torch.cat([h.mean(dim=1), S, scale_factors], dim=1)
+            else:
+                graph_init_embed = torch.cat([h.mean(dim=1), S], dim=1)
+            graph_embedding = self.graph_embed(graph_init_embed)
+                
 
-        return (
-            h,  # (batch_size, graph_size, embed_dim)
-            graph_embedding # (batch_size, embed_dim)
-        )
+            return (
+                h,  # (batch_size, graph_size, embed_dim)
+                graph_embedding # (batch_size, embed_dim)
+            )
+
+        else:
+            # Here [h] is the last compatibility matrix (attn)
+            # (n_heads, I, N, N) -> (I, N, N, n_heads)
+            u_mat = h.permute(1, 2, 3, 0)
+            I, N, _, n_heads = u_mat.size()
+            # (I, N, N, n_heads) -> (I, N, N, n_heads+add_graph_dim)
+            if self.add_graph_dim > 0:
+                if self.rescale_dist:
+                    assert scale_factors is not None, "rescale_dist=True but scale_dist is None"
+                    graph_features = torch.cat([S, scale_factors], dim=1)
+                else:
+                    graph_features = S
+                # broadcast graph features to the same shape as u_mat
+                graph_features = graph_features.unsqueeze(1).unsqueeze(1).expand(I, N, N, self.add_graph_dim)
+                
+                u_mat = torch.cat([u_mat, graph_features], dim=3)
+
+            u_mat = self.u_mat_embed(u_mat.view(-1, u_mat.size(-1))).view(*u_mat.size()[:3], -1)
+            assert u_mat.size() == (I,N,N,2), f"{u_mat.size()} != [{I}, {N}, {N}, 2]"
+            return u_mat

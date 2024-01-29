@@ -66,8 +66,13 @@ class AttentionModel(nn.Module):
                  normalization='batch',
                  n_heads=8,
                  checkpoint_encoder=False,
-                 shrink_size=None):
+                 shrink_size=None,
+                 encoder_only=False,    # this is used for [Att-GCRN-MCTS-2021], 
+                 # which takes the compatibility matrix from the last encoding layer
+                 ):
         super(AttentionModel, self).__init__()
+
+        self.encoder_only = encoder_only
 
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
@@ -160,9 +165,14 @@ class AttentionModel(nn.Module):
             rank_k_approx=rank_k_approx,
             n_edge_encode_layers=n_edge_encode_layers, 
             normalization=normalization,
-            rescale_dist=rescale_dist
+            rescale_dist=rescale_dist,
+            return_u_mat=self.encoder_only, # if True, return a compatibility matrix; else, return node embeddings & graph embedding
         )
 
+        if self.encoder_only:
+            # the decoder-related matrix will not be used
+            return
+        
         # For each node we compute (glimpse key, glimpse value, logit key) so 3 * embedding_dim
         # glimpse key / value are for computing h_{c,N+1} (eq.5,6 - Kool, 2019)
         # logit key is for computing the logits (eq.7 - Kool, 2019)
@@ -188,6 +198,10 @@ class AttentionModel(nn.Module):
         using DataParallel as the results may be of different lengths on different GPUs
         :return:
         """
+
+        if self.encoder_only:
+            u_mat = self.get_init_embed(input)
+            return u_mat
 
         embeddings, graph_embed = self.get_init_embed(input)    # packed together so it's easy to be called by sample_many, etc...
 
@@ -229,9 +243,9 @@ class AttentionModel(nn.Module):
         # ================================================
 
 
-        assert self.checkpoint_encoder == False, "Yifan hasn't implemented checkpoint :("
+        assert self.checkpoint_encoder == False, "hasn't implemented checkpoint :("
         if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
-            embeddings, graph_embed = checkpoint(self.embedder, self._init_embed(input))
+            return checkpoint(self.embedder, self._init_embed(input))
         else:
             # init_embed: (batch_size, graph_size, embedding_dim) - h^0_i's
             # S: (batch_size, graph_size, rank_k_approx) - first k singular values of the (rel) distance matrix
@@ -244,8 +258,9 @@ class AttentionModel(nn.Module):
             
             scale_factors = None if not self.rescale_dist else input['scale_factors']
             
-            embeddings, graph_embed = self.embedder(init_embed, S, scale_factors=scale_factors, edge_matrix=edge_matrix)
-        return embeddings, graph_embed
+            # if self.encoder_only: return u_mat
+            # else: return (embeddings, graph_embed)
+            return self.embedder(init_embed, S, scale_factors=scale_factors, edge_matrix=edge_matrix)
 
 
     def beam_search(self, *args, **kwargs):
