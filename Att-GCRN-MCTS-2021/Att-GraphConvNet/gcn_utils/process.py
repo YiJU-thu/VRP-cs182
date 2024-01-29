@@ -14,11 +14,12 @@ from torch.autograd import Variable
 from sklearn.utils.class_weight import compute_class_weight
 
 from config import *
-from utils.graph_utils import *
-from utils.google_tsp_reader import GoogleTSPReader
-from utils.plot_utils import *
+from gcn_utils.graph_utils import *
+from gcn_utils.google_tsp_reader import GoogleTSPReader
+from gcn_utils.plot_utils import *
 from models.gcn_model import ResidualGatedGCNModel
-from utils.model_utils import *
+from models.am_model import AttModel
+from gcn_utils.model_utils import *
 from datetime import datetime
 
 # setting random seed to 1
@@ -79,6 +80,8 @@ def train_one_epoch(net, optimizer, config, data_generator,
         # Convert batch to torch Variables
         x_edges = Variable(torch.LongTensor(batch.edges).type(dtypeLong), requires_grad=False)
         x_edges_values = Variable(torch.FloatTensor(batch.edges_values).type(dtypeFloat), requires_grad=False)
+        x_rel_edges_values = Variable(torch.FloatTensor(batch.rel_edges_values).type(dtypeFloat), requires_grad=False)
+        x_scale_factors = Variable(torch.FloatTensor(batch.scale_factors).type(dtypeFloat), requires_grad=False) if batch.scale_factors is not None else None
         x_nodes = Variable(torch.LongTensor(batch.nodes).type(dtypeLong), requires_grad=False)
         x_nodes_coord = Variable(torch.FloatTensor(batch.nodes_coord).type(dtypeFloat), requires_grad=False)
         y_edges = Variable(torch.LongTensor(batch.edges_target).type(dtypeLong), requires_grad=False)
@@ -90,7 +93,7 @@ def train_one_epoch(net, optimizer, config, data_generator,
             edge_cw = compute_class_weight("balanced", classes=np.unique(edge_labels), y=edge_labels)
         
         # Forward pass
-        y_preds, loss = net.forward(x_edges, x_edges_values, x_nodes, x_nodes_coord, y_edges,
+        y_preds, loss = net.forward(x_edges, x_edges_values, x_rel_edges_values, x_scale_factors, x_nodes, x_nodes_coord, y_edges,
                                     edge_cw, num_neg, loss_type, gamma)
         loss = loss.mean()  # Take mean of loss across multiple GPUs
         loss = loss / accumulation_steps  # Scale loss by accumulation steps
@@ -101,34 +104,39 @@ def train_one_epoch(net, optimizer, config, data_generator,
             optimizer.step()
             optimizer.zero_grad()
 
-        # Compute error metrics and mean tour lengths
-        # err_edges, err_tour, err_tsp, tour_err_idx, tsp_err_idx = edge_error(y_preds, y_edges, x_edges)
-        pred_tour_len = mean_tour_len_edges(x_edges_values, y_preds)
-        gt_tour_len = np.mean(batch.tour_len)
-
-        # Update running data
-        running_nb_data += batch_size
-        running_loss += batch_size* loss.data.item()* accumulation_steps  # Re-scale loss
-        # running_err_edges += batch_size* err_edges
-        # running_err_tour += batch_size* err_tour
-        # running_err_tsp += batch_size* err_tsp
-        running_pred_tour_len += batch_size* pred_tour_len
-        running_gt_tour_len += batch_size* gt_tour_len
-        running_nb_batch += 1
+        if (batch_num+1) % config.log_step == 0:
         
-        # Log intermediate statistics
-        result = ('loss:{loss:.4f} pred_tour_len:{pred_tour_len:.3f} gt_tour_len:{gt_tour_len:.3f}'.format(
-            loss=running_loss/running_nb_data,
-            pred_tour_len=running_pred_tour_len/running_nb_data,
-            gt_tour_len=running_gt_tour_len/running_nb_data))
-        master_bar.child.comment = result
+            # Compute error metrics and mean tour lengths
+            # err_edges, err_tour, err_tsp, tour_err_idx, tsp_err_idx = edge_error(y_preds, y_edges, x_edges)
+            beam_size=100
+            bs_nodes = beamsearch_tour_nodes(
+                        y_preds, beam_size, batch_size, num_nodes, dtypeFloat, dtypeLong, probs_type='logits')
+            pred_tour_len = mean_tour_len_nodes(x_edges_values, bs_nodes)
+            gt_tour_len = np.mean(batch.tour_len)
+
+            # Update running data
+            running_nb_data += batch_size
+            running_loss += batch_size* loss.data.item()* accumulation_steps  # Re-scale loss
+            # running_err_edges += batch_size* err_edges
+            # running_err_tour += batch_size* err_tour
+            # running_err_tsp += batch_size* err_tsp
+            running_pred_tour_len += batch_size* pred_tour_len
+            running_gt_tour_len += batch_size* gt_tour_len
+            running_nb_batch += 1
+            
+            # Log intermediate statistics
+            result = ('loss:{loss:.4f} pred_tour_len:{pred_tour_len:.3f} gt_tour_len:{gt_tour_len:.3f}'.format(
+                loss=running_loss/running_nb_data,
+                pred_tour_len=running_pred_tour_len/running_nb_data,
+                gt_tour_len=running_gt_tour_len/running_nb_data))
+            master_bar.child.comment = result
 
 
-        # TODO: Log to wandb (log results of this batch (not running mean))
-        if (wandb_logger is not None) and ((batch_num+1) % config.log_step == 0):
-            wandb_logger.log({'avg_cost': pred_tour_len,
-                              'actor_loss': loss.item(),
-                              'opt_gap': pred_tour_len/gt_tour_len - 1,})
+            # TODO: Log to wandb (log results of this batch (not running mean))
+            if (wandb_logger is not None):
+                wandb_logger.log({'avg_cost': pred_tour_len,
+                                'actor_loss': loss.item(),
+                                'opt_gap': pred_tour_len/gt_tour_len - 1,})
 
 
     # Compute statistics for full epoch
@@ -231,6 +239,8 @@ def test(net, config, mode, dataset, epoch,
             # Convert batch to torch Variables
             x_edges = Variable(torch.LongTensor(batch.edges).type(dtypeLong), requires_grad=False)
             x_edges_values = Variable(torch.FloatTensor(batch.edges_values).type(dtypeFloat), requires_grad=False)
+            x_rel_edges_values = Variable(torch.FloatTensor(batch.rel_edges_values).type(dtypeFloat), requires_grad=False)
+            x_scale_factors = Variable(torch.FloatTensor(batch.scale_factors).type(dtypeFloat), requires_grad=False) if batch.scale_factors is not None else None
             x_nodes = Variable(torch.LongTensor(batch.nodes).type(dtypeLong), requires_grad=False)
             x_nodes_coord = Variable(torch.FloatTensor(batch.nodes_coord).type(dtypeFloat), requires_grad=False)
             y_edges = Variable(torch.LongTensor(batch.edges_target).type(dtypeLong), requires_grad=False)
@@ -242,7 +252,7 @@ def test(net, config, mode, dataset, epoch,
                 edge_cw = compute_class_weight("balanced", classes=np.unique(edge_labels), y=edge_labels)
 
             # Forward pass --- modify
-            y_preds, loss = net.forward(x_edges, x_edges_values, x_nodes, x_nodes_coord, y_edges, 
+            y_preds, loss = net.forward(x_edges, x_edges_values, x_rel_edges_values, x_scale_factors, x_nodes, x_nodes_coord, y_edges, 
                                         edge_cw, num_neg, loss_type, gamma)
             loss = loss.mean()  # Take mean of loss across multiple GPUs
 
@@ -318,6 +328,8 @@ def main(config, data_generator, wandb_logger=None):
     
     if netname == 'att-gcn':
         net = ResidualGatedGCNModel(config, dtypeFloat, dtypeLong)
+    elif netname == 'am':
+        net = AttModel(config, dtypeFloat, dtypeLong)
     else:
         raise ValueError('Network name not recognized')
     
@@ -328,13 +340,13 @@ def main(config, data_generator, wandb_logger=None):
     if pretrained:
         if pretrained_path is not None:
             log_dir = pretrained_path
-            if torch.cuda.is_available():
-                checkpoint = torch.load(log_dir)
+            # if torch.cuda.is_available():
+            checkpoint = torch.load(log_dir)
             net.load_state_dict(checkpoint['model_state_dict'])
         else:
-            log_dir = f"./tsp-models/{config.expt_name}/"
-            if torch.cuda.is_available():
-                checkpoint = torch.load(log_dir+"best_val_checkpoint.tar")
+            log_dir = config.save_dir
+            # if torch.cuda.is_available():
+            checkpoint = torch.load(log_dir+"best_val_checkpoint.pt")
             net.load_state_dict(checkpoint['model_state_dict'])
     print(net)
 
@@ -350,7 +362,7 @@ def main(config, data_generator, wandb_logger=None):
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(save_dir, exist_ok=True)
 
-    json.dump(vars(config), open(f"{save_dir}/config.json", "w"), indent=4)
+    json.dump(vars(config), open(f"{save_dir}/args.json", "w"), indent=4)
     tb_logger = SummaryWriter(log_dir)  # Define Tensorboard writer
 
     # Training parameters
@@ -411,7 +423,7 @@ def main(config, data_generator, wandb_logger=None):
                     'optimizer_state_dict': optimizer.state_dict(),
                     'train_loss': train_loss,
                     'val_loss': val_loss,
-                }, os.path.join(save_dir,"best_val_checkpoint_{}.tar".format(epoch)))
+                }, os.path.join(save_dir,"best_val_checkpoint.pt"))
             
             # Update learning rate
             if val_loss > 0.99 * val_loss_old:
@@ -442,7 +454,7 @@ def main(config, data_generator, wandb_logger=None):
             'optimizer_state_dict': optimizer.state_dict(),
             'train_loss': train_loss,
             'val_loss': val_loss,
-        }, os.path.join(save_dir,"last_train_checkpoint.tar"))
+        }, os.path.join(save_dir,"last_train_checkpoint.pt"))
         
         # Save checkpoint after every 250 epochs
         if epoch != 0 and (epoch % config.checkpoint_epochs == 0 or epoch == max_epochs-1):
@@ -452,7 +464,7 @@ def main(config, data_generator, wandb_logger=None):
                 # 'optimizer_state_dict': optimizer.state_dict(),
                 'train_loss': train_loss,
                 'val_loss': val_loss,
-            }, os.path.join(save_dir,f"checkpoint_epoch{epoch}.tar"))
+            }, os.path.join(save_dir,f"epoch-{epoch}.pt"))
         if num_patience >= patience:
             pass # TODO: forbid early stop
             # break
