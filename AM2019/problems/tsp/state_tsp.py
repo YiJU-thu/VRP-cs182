@@ -2,6 +2,13 @@ import torch
 from typing import NamedTuple
 from utils.boolmask import mask_long2bool, mask_long_scatter
 
+import os, sys
+curr_path = os.path.dirname(__file__)
+utils_vrp_path = os.path.join(curr_path, '..', '..', '..', 'utils_project')
+if utils_vrp_path not in sys.path:
+    sys.path.append(utils_vrp_path)
+from utils_vrp import get_random_graph, normalize_graph, recover_graph
+
 
 class StateTSP(NamedTuple):
     # Fixed input
@@ -41,6 +48,9 @@ class StateTSP(NamedTuple):
     @staticmethod
     def initialize(data, visited_dtype=torch.uint8):
 
+        if data.get("scale_factors") is not None:
+            data = recover_graph(data)  # use the true distance matrix here
+
         loc = data['coords']
         if 'distance' in data:
             dist = data['distance']
@@ -74,8 +84,7 @@ class StateTSP(NamedTuple):
 
         assert self.all_finished()
         # assert self.visited_.
-        raise NotImplementedError
-        return self.lengths + (self.loc[self.ids, self.first_a, :] - self.cur_coord).norm(p=2, dim=-1)
+        return self.lengths + self.dist[self.ids, self.prev_a, self.first_a]
 
     def update(self, selected):
 
@@ -90,7 +99,7 @@ class StateTSP(NamedTuple):
         cur_coord = self.loc[self.ids, prev_a]
         lengths = self.lengths
         if self.cur_coord is not None:  # Don't add length for first action (selection of start node)
-            lengths = self.lengths + (cur_coord - self.cur_coord).norm(p=2, dim=-1)  # (batch_dim, 1)
+            lengths = self.lengths + self.dist[self.ids, self.prev_a, prev_a]  # (batch_dim, 1)
 
         # Update should only be called with just 1 parallel step, in which case we can check this way if we should update
         first_a = prev_a if self.i.item() == 0 else self.first_a

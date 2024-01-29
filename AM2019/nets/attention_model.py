@@ -66,8 +66,13 @@ class AttentionModel(nn.Module):
                  normalization='batch',
                  n_heads=8,
                  checkpoint_encoder=False,
-                 shrink_size=None):
+                 shrink_size=None,
+                 encoder_only=False,    # this is used for [Att-GCRN-MCTS-2021], 
+                 # which takes the compatibility matrix from the last encoding layer
+                 ):
         super(AttentionModel, self).__init__()
+
+        self.encoder_only = encoder_only
 
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
@@ -160,9 +165,14 @@ class AttentionModel(nn.Module):
             rank_k_approx=rank_k_approx,
             n_edge_encode_layers=n_edge_encode_layers, 
             normalization=normalization,
-            rescale_dist=rescale_dist
+            rescale_dist=rescale_dist,
+            return_u_mat=self.encoder_only, # if True, return a compatibility matrix; else, return node embeddings & graph embedding
         )
 
+        if self.encoder_only:
+            # the decoder-related matrix will not be used
+            return
+        
         # For each node we compute (glimpse key, glimpse value, logit key) so 3 * embedding_dim
         # glimpse key / value are for computing h_{c,N+1} (eq.5,6 - Kool, 2019)
         # logit key is for computing the logits (eq.7 - Kool, 2019)
@@ -189,7 +199,30 @@ class AttentionModel(nn.Module):
         :return:
         """
 
-        # Yi: add sanity check for input
+        if self.encoder_only:
+            u_mat = self.get_init_embed(input)
+            return u_mat
+
+        embeddings, graph_embed = self.get_init_embed(input)    # packed together so it's easy to be called by sample_many, etc...
+
+        _log_p, pi = self._inner(input, embeddings, graph_embed=graph_embed, force_steps=force_steps)
+
+        for i in range(force_steps):
+            assert pi[:, i].eq(i).all(), "Forced output incorrect"
+        
+        cost, mask = self.problem.get_costs(input, pi)
+        # Log likelyhood is calculated within the model since returning it per action does not work well with
+        # DataParallel since sequences can be of different lengths
+        ll = self._calc_log_likelihood(_log_p, pi, mask, force_steps=force_steps)
+        if return_pi:
+            return cost, ll, pi
+
+        return cost, ll
+
+
+    def get_init_embed(self, input):
+        
+        # add sanity check for input
         assert isinstance(input, dict), "Input must be a dictionary"
         assert 'coords' in input, "Input must contain 'coords' key"
         I, N, _ = input['coords'].shape
@@ -210,9 +243,9 @@ class AttentionModel(nn.Module):
         # ================================================
 
 
-        assert self.checkpoint_encoder == False, "Yifan hasn't implemented checkpoint :("
+        assert self.checkpoint_encoder == False, "hasn't implemented checkpoint :("
         if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
-            embeddings, graph_embed = checkpoint(self.embedder, self._init_embed(input))
+            return checkpoint(self.embedder, self._init_embed(input))
         else:
             # init_embed: (batch_size, graph_size, embedding_dim) - h^0_i's
             # S: (batch_size, graph_size, rank_k_approx) - first k singular values of the (rel) distance matrix
@@ -225,27 +258,16 @@ class AttentionModel(nn.Module):
             
             scale_factors = None if not self.rescale_dist else input['scale_factors']
             
-            embeddings, graph_embed = self.embedder(init_embed, S, scale_factors=scale_factors, edge_matrix=edge_matrix)
+            # if self.encoder_only: return u_mat
+            # else: return (embeddings, graph_embed)
+            return self.embedder(init_embed, S, scale_factors=scale_factors, edge_matrix=edge_matrix)
 
-        _log_p, pi = self._inner(input, embeddings, graph_embed=graph_embed, force_steps=force_steps)
-
-        for i in range(force_steps):
-            assert pi[:, i].eq(i).all(), "Forced output incorrect"
-        
-        cost, mask = self.problem.get_costs(input, pi)
-        # Log likelyhood is calculated within the model since returning it per action does not work well with
-        # DataParallel since sequences can be of different lengths
-        ll = self._calc_log_likelihood(_log_p, pi, mask, force_steps=force_steps)
-        if return_pi:
-            return cost, ll, pi
-
-        return cost, ll
 
     def beam_search(self, *args, **kwargs):
         return self.problem.beam_search(*args, **kwargs, model=self)
 
     def precompute_fixed(self, input):
-        embeddings, graph_embed = self.embedder(self._init_embed(input))
+        embeddings, graph_embed = self.get_init_embed(input)
         # Use a CachedLookup such that if we repeatedly index this object with the same index we only need to do
         # the lookup once... this is the case if all elements in the batch have maximum batch size
         return CachedLookup(self._precompute(embeddings, graph_embed))
@@ -427,7 +449,7 @@ class AttentionModel(nn.Module):
         return sample_many(
             lambda input: self._inner(*input),  # Need to unpack tuple into arguments
             lambda input, pi: self.problem.get_costs(input[0], pi),  # Don't need embeddings as input to get_costs
-            (input, self.embedder(self._init_embed(input))[0]),  # Pack input with embeddings (additional input)
+            (input, *self.get_init_embed(input)),  # Pack input with embeddings (additional input)
             batch_rep, iter_rep
         )
 
@@ -475,7 +497,7 @@ class AttentionModel(nn.Module):
         return AttentionModelFixed(embeddings, fixed_context, *fixed_attention_node_data)
 
     def _get_log_p_topk(self, fixed, state, k=None, normalize=True):
-        log_p, _ = self._get_log_p(fixed, state, normalize=normalize)
+        log_p, mask, glimpse = self._get_log_p(fixed, state, normalize=normalize)
 
         # Return topk
         if k is not None and k < log_p.size(-1):

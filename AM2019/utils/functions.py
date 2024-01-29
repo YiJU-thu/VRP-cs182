@@ -186,6 +186,8 @@ def do_batch_rep(v, n):
         return [do_batch_rep(v_, n) for v_ in v]
     elif isinstance(v, tuple):
         return tuple(do_batch_rep(v_, n) for v_ in v)
+    elif v is None:
+        return None
 
     return v[None, ...].expand(n, *v.size()).contiguous().view(-1, *v.size()[1:])
 

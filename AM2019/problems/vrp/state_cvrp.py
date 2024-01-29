@@ -2,6 +2,13 @@ import torch
 from typing import NamedTuple
 from utils.boolmask import mask_long2bool, mask_long_scatter
 
+import os, sys
+curr_path = os.path.dirname(__file__)
+utils_vrp_path = os.path.join(curr_path, '..', '..', '..', 'utils_project')
+if utils_vrp_path not in sys.path:
+    sys.path.append(utils_vrp_path)
+from utils_vrp import get_random_graph, normalize_graph, recover_graph
+
 from loguru import logger
 
 class StateCVRP(NamedTuple):
@@ -53,6 +60,9 @@ class StateCVRP(NamedTuple):
     @staticmethod
     def initialize(data, visited_dtype=torch.uint8):
 
+        if data.get("scale_factors") is not None:
+            data = recover_graph(data)  # use the true distance matrix here
+
         loc = data['coords']
         demand = data['demand']
         if 'distance' in data:
@@ -88,8 +98,7 @@ class StateCVRP(NamedTuple):
 
         assert self.all_finished()
         # Edit it later for beam search
-        raise NotImplementedError
-        return self.lengths + (self.coords[self.ids, 0, :] - self.cur_coord).norm(p=2, dim=-1)
+        return self.lengths + self.dist[self.ids, self.prev_a, self.first_a]
 
     def update(self, selected):
 
@@ -110,7 +119,7 @@ class StateCVRP(NamedTuple):
         # logger.debug(self.lengths.shape)
         # logger.debug(cur_coord.shape)
         # logger.debug(self.cur_coord.shape)
-        lengths = self.lengths + (cur_coord - self.cur_coord).norm(p=2, dim=-1)  # (batch_dim, 1)
+        lengths = self.lengths + self.dist[self.ids, self.prev_a, prev_a]  # (batch_dim, 1)
 
         # Not selected_demand is demand of first node (by clamp) so incorrect for nodes that visit depot!
         #selected_demand = self.demand.gather(-1, torch.clamp(prev_a - 1, 0, n_loc - 1))

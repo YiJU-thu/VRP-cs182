@@ -4,8 +4,8 @@ import torch.nn as nn
 from torch.autograd import Variable
 import math
 
-from utils.beamsearch import *
-from utils.graph_utils import *
+from gcn_utils.beamsearch import *
+from gcn_utils.graph_utils import *
 
 
 def loss_nodes(y_pred_nodes, y_nodes, node_cw):
