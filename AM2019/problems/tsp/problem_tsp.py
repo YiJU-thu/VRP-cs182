@@ -164,11 +164,21 @@ class TSPDataset(Dataset):
             assert torch.norm(x_augment[0, 0, 1] - x_augment[1, -1, 0]) < 1e-8  # graph 0's first node is graph 1's last node
             return x_augment
         
+        def repeat_scale_factors(x, N1):
+            if N1 == 1 or N1 is None:
+                return x
+            B, d = x.shape
+            x_augment = x[:,None,:].repeat(1, N1, 1).reshape(B*N1, d)
+            return x_augment
+
+
         # sample N1 starts for each instance
         dataset['coords'] = sample_coords_start(dataset['coords'], N1)
         if self.non_Euc:
             dataset['distance'] = sample_dist_mat_start(dataset['distance'], N1)
             dataset['rel_distance'] = sample_dist_mat_start(dataset['rel_distance'], N1)
+        if dataset["scale_factors"] is not None:
+            dataset["scale_factors"] = repeat_scale_factors(dataset["scale_factors"], N1)
         
 
         def sample_coords_rot(x, N2):
@@ -203,5 +213,7 @@ class TSPDataset(Dataset):
         if self.non_Euc:
             dataset['distance'] = sample_dist_mat_rot(dataset['distance'], N2)
             dataset['rel_distance'] = sample_dist_mat_rot(dataset['rel_distance'], N2)
-        
+        if dataset["scale_factors"] is not None:
+            dataset["scale_factors"] = repeat_scale_factors(dataset["scale_factors"], N2)
+
         self.data = dataset
