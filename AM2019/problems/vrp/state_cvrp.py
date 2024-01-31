@@ -98,7 +98,7 @@ class StateCVRP(NamedTuple):
 
         assert self.all_finished()
         # Edit it later for beam search
-        return self.lengths + self.dist[self.ids, self.prev_a, self.first_a]
+        return self.lengths + self.dist[self.ids, self.prev_a, 0]   # first (last) step is to depot
 
     def update(self, selected):
 

@@ -548,8 +548,9 @@ def normalize_graph(data, rescale=False):
 
     if "demand" in data:
         demand = data["demand"]
-        assert demand.shape == (I, N)
-        normalized_data["demand"] = demand
+        assert demand.shape == (I, N-1) # NOTE: demand is without depot
+        capacity = data.get("capacity", 1.0)    # normalized capacity
+        normalized_data["demand"] = demand / capacity
 
     if rescale:
         return scale_graph(normalized_data)
@@ -571,8 +572,8 @@ def normalize_graph_np(*args, **kwargs):
     return to_np(normalize_graph(*args, **kwargs))
 
 
-def recover_graph_np(*args, **kwargs):
-    return to_np(recover_graph(*args, **kwargs))
+def recover_graph_np(data):
+    return to_np(recover_graph(to_torch(data)))
 
 
 @deprecated
