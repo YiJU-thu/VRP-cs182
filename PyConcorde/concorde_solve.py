@@ -1,6 +1,9 @@
 from concorde.tsp import TSPSolver
 from concorde.tests.data_utils import get_dataset_path
 from concorde.problem import Problem
+
+from lkh_solve import solve_lkh
+
 import numpy as np
 from time import perf_counter
 import time
@@ -13,7 +16,7 @@ _curr_dir = os.path.dirname(__file__)
 utils_dir = os.path.join(_curr_dir, '../utils_project')
 if utils_dir not in sys.path:
     sys.path.append(utils_dir)
-from utils_vrp import get_tour_len
+from utils_vrp import get_tour_len, recover_graph_np
 
 
 
@@ -107,12 +110,19 @@ def concorde_euc_2d(coords, scale=1, time_bound=-1):
     return obj_actual, route, t
 
 
-def solve_one_instance(instance, type="EUC_2D", info="", **kws):
+def solve_one_instance(instance, type="EUC_2D", solver="concorde", info="", args=None, **kws):
     try:
         if type == "EUC_2D":
             opt_value, route, t = concorde_euc_2d(instance, **kws)
         elif type == "ATSP":
-            opt_value, route, t = concorde_atsp_2d(instance, **kws)
+            if solver == "concorde":
+                opt_value, route, t = concorde_atsp_2d(instance, **kws)
+            elif solver == "lkh":   # FIXME: can write in a more elegant way
+                directory = args.tmp_log_dir
+                if not os.path.exists(directory):
+                    os.makedirs(directory)
+                name, runs = info, 1
+                opt_value, route, t = solve_lkh(directory=directory, name=name, dist_mat=instance, runs=runs, scale=kws["scale"])
         logger.success(f"{info} | opt_value: {opt_value:.2f}, t: {t:.2f}")
     except:
         logger.error(f"{info} |", "failed")
@@ -159,11 +169,14 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('--solver', type=str, default="concorde", help='solver name. avail: concorde, lkh')
     parser.add_argument('--type', type=str, default="ATSP", help='problem type. avail: ATSP, EUC_2D')
     parser.add_argument('--I', type=int, default=None, help='solve the first I unsolved problems')
     parser.add_argument('--redo_failed', action='store_true', help='redo failed instances')
     parser.add_argument('--data', type=str, help='data filename')
     parser.add_argument('--data_dir', type=str, default=None, help='data directory. use /dataset if None')
+    parser.add_argument('--recover_graph', action='store_true', help='recover graph from scale_factors')
+    parser.add_argument('--skip_station', action='store_true', help='skip station (depot) nodes in the data')
     parser.add_argument('--scale', type=float, default=1e1, help='scale the distance matrix / coords')  # FIXME: may auto find the right scale!
     parser.add_argument('--big_M', type=float, default=1e2, help='big M in ATSP')
     parser.add_argument('--time_bound', type=float, default=-1, help='time bound for each instance, default -1 means no time bound')
@@ -172,6 +185,8 @@ if __name__ == "__main__":
     parser.add_argument('--clear', type=int, default=100, help='clear .res files every CLEAR instances')
     parser.add_argument('--save', type=int, default=100, help='save results every SAVE instances')
     parser.add_argument('--log', type=str, default="concorde_log.log", help='log filename')
+    parser.add_argument('--tmp_log_dir', type=str, default="log_NoTrack", help='tmp log directory that stores intermediate log files')
+    parser.add_argument('--ignore_NoTrack', action='store_true', help='remove NoTrack in file names so that the solutions will be tracked')
     
     args = parser.parse_args()
     
@@ -190,8 +205,25 @@ if __name__ == "__main__":
         I_tot = len(data["distance"])   # number of instances, it may be a list (each instance different size), or a np.ndarray w/ shape (I,N,N)
     if args.type == "EUC_2D":
         I_tot = len(data)
+    if args.recover_graph:
+        data = recover_graph_np(data)
     
     
+    if args.skip_station:
+        assert "station" in data.keys(), "dataset should have key 'station'"
+        coords = []
+        distance = []
+        for i in range(len(data["coords"])):
+            n = len(data["coords"][i])
+            s = data["station"][i]
+            idx = np.concatenate([np.arange(s), np.arange(s+1,n)]).astype(int)
+            coords.append(data["coords"][i][idx])
+            distance.append(data["distance"][i][idx][:, idx])
+        data['coords'] = coords
+        data['distance'] = distance
+
+
+
     out_dir = _curr_dir if args.out_dir is None else args.out_dir
     assert os.path.exists(out_dir), f"{out_dir} does not exist"
 
@@ -199,7 +231,11 @@ if __name__ == "__main__":
         logger.add(args.log)
     
     
-    out_fn = os.path.join(out_dir, f"{args.out_prefix}_{args.data}") # FIXME: data is .pkl, but this may be risky
+    out_fn = f"{args.out_prefix}_{args.data}"
+    if args.ignore_NoTrack and "NoTrack" in out_fn:
+        out_fn = out_fn.replace("_NoTrack", "")
+    out_fn = os.path.join(out_dir, out_fn) # FIXME: data is .pkl, but this may be risky
+    
     exist_res = retrieve_res(out_fn, redo_failed=args.redo_failed)
     if exist_res is not None:
         res, to_do_idx = exist_res
@@ -225,16 +261,17 @@ if __name__ == "__main__":
         
         if args.type == "ATSP": 
             opt_value, route, t = solve_one_instance(instance=data["distance"][idx], type="ATSP", 
-                    info=f"id={idx}", scale=args.scale, big_M=args.big_M, time_bound=args.time_bound)
+                    info=f"id={idx}", scale=args.scale, big_M=args.big_M, time_bound=args.time_bound, solver=args.solver, args=args)
         elif args.type == "EUC_2D":
+            assert args.solver == "concorde", "Now only concorde support EUC_2D"
             opt_value, route, t = solve_one_instance(instance=data[idx], type="EUC_2D", 
-                    info=f"id={idx}", scale=args.scale, time_bound=args.time_bound)
+                    info=f"id={idx}", scale=args.scale, time_bound=args.time_bound, solver=args.solver, args=args)
         
         res["obj"][idx] = opt_value
         res["time"][idx] = t
         res["tour"][idx] = route
 
-        if (i+1) % args.clear == 0:
+        if (i+1) % args.clear == 0 and args.solver == "concorde":
             sleep(0.5)
             clear_concorde_files()
         if (i+1) % args.save == 0:
@@ -243,7 +280,8 @@ if __name__ == "__main__":
             log_stats(res)
     
     sleep(1)
-    clear_concorde_files()
+    if args.solver == "concorde":
+        clear_concorde_files()
     with open(out_fn, "wb") as f:
         pickle.dump(res, f)
     log_stats(res)
