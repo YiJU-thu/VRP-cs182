@@ -19,7 +19,7 @@ from utils_vrp import get_random_graph_np
 
 
 
-def save_random_dataset(num_graphs, graph_size, rescale, force_triangle_iter, seed, save=True, save_path=None):
+def save_random_dataset(num_graphs, graph_size, rescale, force_triangle_iter, seed, problem="tsp", save=True, save_path=None):
 
     if save_path is not None and os.path.exists(save_path):
         logger.info(f"File {cstring.green(save_path)} already exists!")
@@ -28,7 +28,8 @@ def save_random_dataset(num_graphs, graph_size, rescale, force_triangle_iter, se
         return dumped
 
     data = get_random_graph_np(n=graph_size, num_graphs=num_graphs, non_Euc=True, 
-                               rescale=rescale, force_triangle_iter=force_triangle_iter, seed=seed)
+                               rescale=rescale, force_triangle_iter=force_triangle_iter, seed=seed,
+                               is_cvrp=(problem=="cvrp"), )
     # data has keys "coords", "rel_distance", "distance", "scale_factors"
     if save:
         assert save_path is not None
@@ -61,6 +62,7 @@ def save_mini_copy(data, sample_size=100, save=True, save_path=None):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--problem", type=str, default="tsp", help="problem type. tsp or cvrp")
     parser.add_argument("--num_graphs", type=int, default=1000, help="number of samples")
     parser.add_argument("--graph_size", type=int, default=20, help="number of nodes")
     parser.add_argument("--rescale", action="store_true", help="whether to include scale factors")
@@ -71,6 +73,8 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=1234, help="random seed")
     args = parser.parse_args()
     
+    assert args.problem in ["tsp", "cvrp"], "problem type should be tsp or cvrp"
+
     # TODO: make sure you are not saying the dataset under VRP-CS182 (too large!)
     gitrepo_path = os.path.abspath(os.path.join(curr_dir, "../"))
     assert args.save_dir is not None
@@ -80,9 +84,12 @@ if __name__ == "__main__":
 
     dist_tag = "C" if args.rescale else "S"
     save_fn = f"rnd_N{args.graph_size}_I{args.num_graphs}_{dist_tag}_seed{args.seed}_iter{args.force_triangle_iter}"
+    if args.problem == "cvrp":
+        save_fn = f"CVRP_{save_fn}"
     save_path = os.path.join(args.save_dir, save_fn+("_NoTrack"*in_gitrepo)+".pkl")
     data = save_random_dataset(num_graphs=args.num_graphs, graph_size=args.graph_size, 
-                               rescale=args.rescale, force_triangle_iter=args.force_triangle_iter, seed=args.seed, save=True, save_path=save_path)
+                               rescale=args.rescale, force_triangle_iter=args.force_triangle_iter, 
+                               seed=args.seed, save=True, save_path=save_path, problem=args.problem)
     
     if args.mini_copy:
         mini_size=100
