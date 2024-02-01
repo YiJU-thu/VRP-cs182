@@ -57,7 +57,7 @@ def eval_dataset(dataset_path, width, softmax_temp, opts, dataset=None):
     
     rescale_dist = model.rescale_dist 
     non_Euc = model.non_Euc 
-    assert model.problem.NAME == "tsp", "Only implemented for TSP"
+    # assert model.problem.NAME == "tsp", "Only implemented for TSP"
 
     use_cuda = torch.cuda.is_available() and not opts.no_cuda
     if opts.multiprocessing:

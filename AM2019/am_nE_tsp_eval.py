@@ -18,6 +18,12 @@ import pandas as pd
 import numpy as np
 
 
+def _tour_zeropad(tours):
+    # pad tours to the same length (solution from CVRP)
+    max_len = max([len(t) for t in tours])
+    tours_arr = np.array([np.pad(t, (0, max_len - len(t)), mode='constant') for t in tours])
+    return tours_arr
+
 @logger.catch
 def eval_nE_tsp(model, dataset, recompute_cost=True,
                 decode_strategy='greedy', width=0, max_calc_batch_size=10000):
@@ -40,8 +46,12 @@ def eval_nE_tsp(model, dataset, recompute_cost=True,
     costs, tours, durations = eval_dataset(dataset_path=None, dataset=dataset,
              width=width, softmax_temp=1, opts=opts)
     
+    # NOTE: in cvrp, each tour may have different length
     costs = np.array(costs)
-    tours = np.array(tours)
+    try:
+        tours = np.array(tours)
+    except:
+        tours = _tour_zeropad(tours)
     durations = np.array(durations)
 
     if not recompute_cost:
@@ -118,16 +128,19 @@ def load_dataset(dataset_path, dataset_type, **kwargs):
     return to_torch(dataset)
 
 
-
-def run_eval(model, ds, data_dir, config=None):
+@logger.catch
+def run_eval(model, ds, data_dir, config=None, problem="tsp"):
     assert ds in ['amz_nS', 'amz_S', 'rnd_S', 'rnd_C', 'amz_eval']
-    n = int(model.split('tsp')[1].split('_')[0])
+    n = int(model.split(problem)[1].split('_')[0])
     seed = 1234
     if ds == 'amz_nS' or ds == 'amz_S':
+        assert problem == 'tsp', "amzaon dataset only support TSP now"
         dataset_path = os.path.join(data_dir, f"amazon_eval_N{n}_I1000_seed1234_S.pkl")
         dataset = load_dataset(dataset_path, dataset_type='amz', to_np=True, skip_station=(ds=='amz_nS'))
     elif ds == 'rnd_S' or ds == 'rnd_C':
-        dataset_path = os.path.join(data_dir, f"rnd_N{n}_I1000_{ds[-1]}_seed1234_iter4.pkl")
+        if problem == 'cvrp':
+            assert ds == 'rnd_S', "rnd complex dataset only support TSP now"
+        dataset_path = os.path.join(data_dir, f"{'CVRP_'*(problem=='cvrp')}rnd_N{n}_I1000_{ds[-1]}_seed1234_iter4.pkl")
         dataset = load_dataset(dataset_path, dataset_type='rnd', rnd_dist='standard' if ds=='rnd_S' else 'complex')
     elif ds == 'amz_eval':
         raise NotImplementedError
@@ -174,28 +187,32 @@ if __name__ == "__main__":
         
         model = os.path.join('pretrained/Jan26-icml',df.index[i])
         ds = df.columns[idx]
+        problem = df.iloc[i]['problem'] if 'problem' in df.columns else 'tsp'
+        assert problem in ['tsp', 'cvrp']
 
         decode_strategy = df.iloc[i]['decode_strategy']
         width = int(df.iloc[i]['width'])
         config = {
             "decode_strategy": decode_strategy,
-            "width": width
+            "width": width,
         }
 
         logger.info(f"Eval model {model} on dataset {ds}")
         
         try:
-            res = run_eval(model, ds, data_dir, config)
+            res = run_eval(model, ds, data_dir, config, problem=problem)
             logger.success(f"Eval model {model} on dataset {ds} done")
             logger.info(f"costs: {res['obj'].mean():.3f}+-{res['obj'].std():.3f}")
 
             res_fn = f'Res_D_{ds}_{decode_strategy}-{width}.pkl'
             with open(os.path.join(model, res_fn), 'wb') as f:
                 pickle.dump(res, f)
+            df = pd.read_excel(log_fn, index_col=0) # reload, may be updated by other process
             df.iloc[i, idx] = res['obj'].mean()
             df.to_excel(log_fn)
         except Exception as e:
             logger.error(f"Eval model {model} on dataset {ds} failed")
             logger.error(e)
+            df = pd.read_excel(log_fn, index_col=0) # reload, may be updated by other process
             df.iloc[i, idx] = 'F'
             df.to_excel(log_fn)
