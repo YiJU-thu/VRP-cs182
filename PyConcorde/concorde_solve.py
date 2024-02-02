@@ -110,19 +110,28 @@ def concorde_euc_2d(coords, scale=1, time_bound=-1):
     return obj_actual, route, t
 
 
-def solve_one_instance(instance, type="EUC_2D", solver="concorde", info="", args=None, **kws):
+def solve_one_instance(instance, type="EUC_2D", solver="concorde", info="", problem="tsp", args=None, **kws):
     try:
+        problem = problem
+        if not (solver=="lkh" and type=="ATSP"):
+            problem == "tsp", "CVRP is supported for ATSP AND lkh solver now"
         if type == "EUC_2D":
             opt_value, route, t = concorde_euc_2d(instance, **kws)
         elif type == "ATSP":
             if solver == "concorde":
-                opt_value, route, t = concorde_atsp_2d(instance, **kws)
+                opt_value, route, t = concorde_atsp_2d(instance['distance'], **kws)
             elif solver == "lkh":   # FIXME: can write in a more elegant way
                 directory = args.tmp_log_dir
                 if not os.path.exists(directory):
                     os.makedirs(directory)
                 name, runs = info, 1
-                opt_value, route, t = solve_lkh(directory=directory, name=name, dist_mat=instance, runs=runs, scale=kws["scale"])
+                if problem == "tsp":
+                    opt_value, route, t = solve_lkh(directory=directory, name=name, dist_mat=instance['distance'], 
+                                                    runs=runs, scale=kws["scale"], problem=problem)
+                elif problem == "cvrp":
+                    opt_value, route, t = solve_lkh(directory=directory, name=name, dist_mat=instance['distance'], 
+                                                    demand=instance['demand'], depot=0, capacity=args.capacity, 
+                                                    runs=runs, scale=kws["scale"], problem=problem)
         logger.success(f"{info} | opt_value: {opt_value:.2f}, t: {t:.2f}")
     except:
         logger.error(f"{info} |", "failed")
@@ -170,6 +179,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--solver', type=str, default="concorde", help='solver name. avail: concorde, lkh')
+    parser.add_argument('--problem', type=str, default="tsp", help='problem name. avail: tsp, cvrp')
     parser.add_argument('--type', type=str, default="ATSP", help='problem type. avail: ATSP, EUC_2D')
     parser.add_argument('--I', type=int, default=None, help='solve the first I unsolved problems')
     parser.add_argument('--redo_failed', action='store_true', help='redo failed instances')
@@ -179,6 +189,7 @@ if __name__ == "__main__":
     parser.add_argument('--skip_station', action='store_true', help='skip station (depot) nodes in the data')
     parser.add_argument('--scale', type=float, default=1e1, help='scale the distance matrix / coords')  # FIXME: may auto find the right scale!
     parser.add_argument('--big_M', type=float, default=1e2, help='big M in ATSP')
+    parser.add_argument('--capacity', type=int, default=None, help='capacity for CVRP')
     parser.add_argument('--time_bound', type=float, default=-1, help='time bound for each instance, default -1 means no time bound')
     parser.add_argument('--out_dir', type=str, default=None, help='output directory. use current dir if None')
     parser.add_argument('--out_prefix', type=str, default="TSP_concorde", help='output prefix')
@@ -255,16 +266,24 @@ if __name__ == "__main__":
     logger.info(f"Start solving {args.type} instances in {data_fn}, save to {out_dir}")
     logger.info(args)
 
+    def get_data_item(data, idx):
+        if isinstance(data, dict):
+            return {k: get_data_item(v,idx) for k, v in data.items()}
+        elif data is None:
+            return None
+        else:   # tuple, list, ndarray ...
+            return data[idx]
+
 
     for i in range(I):
         idx = to_do_idx[i]
-        
+        instance = get_data_item(data, idx)
         if args.type == "ATSP": 
-            opt_value, route, t = solve_one_instance(instance=data["distance"][idx], type="ATSP", 
+            opt_value, route, t = solve_one_instance(instance=instance, type="ATSP", problem=args.problem,
                     info=f"id={idx}", scale=args.scale, big_M=args.big_M, time_bound=args.time_bound, solver=args.solver, args=args)
         elif args.type == "EUC_2D":
             assert args.solver == "concorde", "Now only concorde support EUC_2D"
-            opt_value, route, t = solve_one_instance(instance=data[idx], type="EUC_2D", 
+            opt_value, route, t = solve_one_instance(instance=instance, type="EUC_2D", problem=args.problem,
                     info=f"id={idx}", scale=args.scale, time_bound=args.time_bound, solver=args.solver, args=args)
         
         res["obj"][idx] = opt_value
