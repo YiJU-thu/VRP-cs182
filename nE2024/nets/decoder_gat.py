@@ -5,11 +5,9 @@ import math
 from typing import NamedTuple
 from utils.tensor_functions import compute_in_batches
 
-from nets.graph_encoder import GraphAttentionEncoder
 from torch.nn import DataParallel
 from utils.beam_search import CachedLookup
 from utils.functions import sample_many
-from utils.tensor_functions import randomized_svd_batch
 
 from loguru import logger
 
@@ -41,42 +39,21 @@ class AttentionModelFixed(NamedTuple):
         )
 
 
-class AttentionModel(nn.Module):
+class AttentionDecoder(nn.Module):
 
     def __init__(self,
                  embedding_dim,
-                 hidden_dim,
                  problem,
-                 non_Euc=False,
-                 rank_k_approx=0, # Yifan: add node features
-                 svd_original_edge=False,
-                 mul_sigma_uv=False,
-                 full_svd=False,
-                 only_distance=False,
-                 n_edge_encode_layers=0,
-                 encode_original_edge=False,
-                 rescale_dist=False,
                  update_context_node=False,
-                 aug_graph_embed=False, 
-                 # NOTE: this is due to a previous mistake. we should always set it as true, while this may ruin the previous trained models
-                 n_encode_layers=2,
                  tanh_clipping=10.,
                  mask_inner=True,
                  mask_logits=True,
-                 normalization='batch',
                  n_heads=8,
-                 checkpoint_encoder=False,
                  shrink_size=None,
-                 encoder_only=False,    # this is used for [Att-GCRN-MCTS-2021], 
-                 # which takes the compatibility matrix from the last encoding layer
                  ):
-        super(AttentionModel, self).__init__()
-
-        self.encoder_only = encoder_only
+        super(AttentionDecoder, self).__init__()
 
         self.embedding_dim = embedding_dim
-        self.hidden_dim = hidden_dim
-        self.n_encode_layers = n_encode_layers
         self.decode_type = None
         self.temp = 1.0
         self.allow_partial = problem.NAME == 'sdvrp'
@@ -91,7 +68,6 @@ class AttentionModel(nn.Module):
 
         self.problem = problem
         self.n_heads = n_heads
-        self.checkpoint_encoder = checkpoint_encoder
         self.shrink_size = shrink_size
 
         # if update_context_node:
@@ -99,48 +75,12 @@ class AttentionModel(nn.Module):
         # else:
         # h_c(t+1,N) = concat([h_graph, h_{\pi_1}, h_{\pi_t}])
         self.update_context_node = update_context_node
+        
 
-        self.non_Euc = non_Euc
-        # idea 1: node feature augmentation
-        self.rank_k_approx = rank_k_approx
-        self.svd_original_edge = svd_original_edge
-        self.mul_sigma_uv = mul_sigma_uv
-        self.full_svd = full_svd
-        self.only_distance = only_distance
-        # idea 2: edge feature encoding
-        self.n_edge_encode_layers = n_edge_encode_layers
-        self.encode_original_edge = encode_original_edge
-        self.rescale_dist = rescale_dist
-        self.aug_graph_embed = aug_graph_embed
-
-        # assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
-        # if only_distance:
-        if only_distance:
-            assert non_Euc == True, "only_distance is only supported for non-Euclidean input"
-            assert rank_k_approx > 0, "only_distance is not supported for rank_k_approx = 0"
-            assert svd_original_edge == True, "must svd on the original edge matrix if only_distance is True"
-
-        assert n_edge_encode_layers <= n_encode_layers, "n_edge_encode_layer must be <= n_encode_layers"
-        if n_edge_encode_layers > 0:
-            assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
-            # assert n_edge_encode_layers == 1, "Now only support edge encoding at the first layer" # FIXME
-        if encode_original_edge:
-            assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
-
-        node_dim = 2*(1-only_distance) + 2 * rank_k_approx  # x, y, u_i_k, v_i_k
         # Problem specific context parameters (placeholder and step context dimension)
         if self.is_vrp or self.is_orienteering or self.is_pctsp:
             # Embedding of last node + remaining_capacity / remaining length / remaining prize to collect
-            step_context_dim = embedding_dim + 1
-
-            if self.is_pctsp:
-                feature_dim = 2 # expected_prize, penalty
-            else:
-                feature_dim = 1  # demand / prize
-            node_dim += feature_dim
-
-            # Special embedding projection for depot node
-            self.init_embed_depot = nn.Linear(node_dim-feature_dim, embedding_dim)
+            step_context_dim = embedding_dim + 1    # FIXME: what's this?
             
             # We dont do split delivery now
             if self.is_vrp and self.allow_partial:  # Need to include the demand if split delivery allowed
@@ -154,24 +94,6 @@ class AttentionModel(nn.Module):
             # Learned input symbols for first action
             self.W_placeholder = nn.Parameter(torch.Tensor(2 * embedding_dim))
             self.W_placeholder.data.uniform_(-1, 1)  # Placeholder should be in range of activations
-
-        self.init_embed = nn.Linear(node_dim, embedding_dim)
-
-        self.embedder = GraphAttentionEncoder(
-            n_heads=n_heads,
-            embed_dim=embedding_dim,
-            n_layers=self.n_encode_layers,
-            non_Euc=non_Euc,
-            rank_k_approx=rank_k_approx,
-            n_edge_encode_layers=n_edge_encode_layers, 
-            normalization=normalization,
-            rescale_dist=rescale_dist,
-            return_u_mat=self.encoder_only, # if True, return a compatibility matrix; else, return node embeddings & graph embedding
-        )
-
-        if self.encoder_only:
-            # the decoder-related matrix will not be used
-            return
         
         # For each node we compute (glimpse key, glimpse value, logit key) so 3 * embedding_dim
         # glimpse key / value are for computing h_{c,N+1} (eq.5,6 - Kool, 2019)
@@ -191,19 +113,13 @@ class AttentionModel(nn.Module):
         if temp is not None:  # Do not change temperature if not provided
             self.temp = temp
 
-    def forward(self, input, force_steps=0, return_pi=False):
+    def forward(self, input, embeddings, graph_embed=None, force_steps=0, return_pi=False):
         """
         :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
         :param return_pi: whether to return the output sequences, this is optional as it is not compatible with
         using DataParallel as the results may be of different lengths on different GPUs
         :return:
         """
-
-        if self.encoder_only:
-            u_mat = self.get_init_embed(input)
-            return u_mat
-
-        embeddings, graph_embed = self.get_init_embed(input)    # packed together so it's easy to be called by sample_many, etc...
 
         _log_p, pi = self._inner(input, embeddings, graph_embed=graph_embed, force_steps=force_steps)
 
@@ -218,49 +134,6 @@ class AttentionModel(nn.Module):
             return cost, ll, pi
 
         return cost, ll
-
-
-    def get_init_embed(self, input):
-        
-        # add sanity check for input
-        assert isinstance(input, dict), "Input must be a dictionary"
-        assert 'coords' in input, "Input must contain 'coords' key"
-        I, N, _ = input['coords'].shape
-        if not self.non_Euc: # input is Euclidean
-            assert self.rank_k_approx == 0, "rank_k_approx is not supported for Euclidean input"
-            assert self.only_distance == False, "only_distance is not supported for Euclidean input"
-            scale_factors_dim = 1
-        else: # non-Euclidean
-            assert "rel_distance" in input, "Input must contain 'rel_distance' key"
-            assert input["distance"].shape == (I, N, N), "distance must be of shape (I, N, N)"
-            assert input["rel_distance"].shape == (I, N, N), "rel_distance must be of shape (I, N, N)"
-            scale_factors_dim = 3
-
-        if self.rescale_dist:
-            assert input['scale_factors'].shape == (I, scale_factors_dim), "scale_dist must be of shape (I, scale_factors_dim)"
-        else:
-            assert input.get('scale_factors') is None, "scale_dist must be None if rescale_dist is False, but get {}".format(input.get('scale_factors'))
-        # ================================================
-
-
-        assert self.checkpoint_encoder == False, "hasn't implemented checkpoint :("
-        if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
-            return checkpoint(self.embedder, self._init_embed(input))
-        else:
-            # init_embed: (batch_size, graph_size, embedding_dim) - h^0_i's
-            # S: (batch_size, graph_size, rank_k_approx) - first k singular values of the (rel) distance matrix
-            init_embed, S = self._init_embed(input)
-            
-            if self.n_edge_encode_layers > 0:
-                edge_matrix = input['distance'] if self.encode_original_edge else input['rel_distance']
-            else:
-                edge_matrix = None
-            
-            scale_factors = None if not self.rescale_dist else input['scale_factors']
-            
-            # if self.encoder_only: return u_mat
-            # else: return (embeddings, graph_embed)
-            return self.embedder(init_embed, S, scale_factors=scale_factors, edge_matrix=edge_matrix)
 
 
     def beam_search(self, *args, **kwargs):
@@ -319,70 +192,7 @@ class AttentionModel(nn.Module):
         # Calculate log_likelihood
         return log_p.sum(1)
 
-    def _init_embed(self, input):        
-        # svd and add node features, then go through the linear layer
-        coords = input['coords']
-        I, N, _ = coords.shape
-        if self.rank_k_approx == 0:
-            nodes = coords
-            Sk = torch.zeros(coords.shape[0], 0, device=coords.device)   # shape (batch_size, 0)
-        else:
-            mat_to_svd = input['distance'] if self.svd_original_edge else input['rel_distance']
-
-            if self.full_svd or self.rank_k_approx/N > 0.6:
-                U, S, Vh = torch.linalg.svd(mat_to_svd)
-                V = Vh.mH
-                Uk, Sk, Vk = U[..., :self.rank_k_approx], S[..., :self.rank_k_approx], V[..., :self.rank_k_approx]
-            else:
-                try: # avoid ill-conditioned matrix, not converge, etc...
-                    Uk, Sk, Vk = randomized_svd_batch(mat_to_svd, self.rank_k_approx)
-                except Exception as e:
-                    logger.warning("randomized_svd_batch failed, using full svd instead")
-                    logger.warning(e)
-                    U, S, Vh = torch.linalg.svd(mat_to_svd)
-                    V = Vh.mH
-                    Uk, Sk, Vk = U[..., :self.rank_k_approx], S[..., :self.rank_k_approx], V[..., :self.rank_k_approx]
-            
-            # multiply sigma to U and V
-            if self.mul_sigma_uv:
-                sqrt_S = torch.sqrt(Sk[:, None, :])
-                Uk, Vk = Uk * sqrt_S, Vk * sqrt_S
-
-            if self.rank_k_approx > N:
-                # pad Uk, Vk, Sk with zeros
-                Uk = torch.cat([Uk, torch.zeros(Uk.shape[0], Uk.shape[2], self.rank_k_approx-N, device=Uk.device)], dim=2)
-                Vk = torch.cat([Vk, torch.zeros(Vk.shape[0], Vk.shape[2], self.rank_k_approx-N, device=Vk.device)], dim=2)
-                Sk = torch.cat([Sk, torch.zeros(Sk.shape[0], self.rank_k_approx-N, device=Sk.device)], dim=1)
-
-            if self.only_distance:
-                nodes = torch.cat([Uk, Vk], dim=2)
-            else:
-                nodes = torch.cat([coords, Uk, Vk], dim=2)
-        
-        if self.is_vrp or self.is_orienteering or self.is_pctsp: # VRP, OP, PCTSP
-            if self.is_vrp:
-                features = ('demand', )
-            elif self.is_orienteering:
-                features = ('prize', )
-            else:
-                assert self.is_pctsp
-                features = ('deterministic_prize', 'penalty')
-            assert nodes.shape == (coords.shape[0], coords.shape[1], 2*(1-self.only_distance) + 2 * self.rank_k_approx)
-            return torch.cat(
-                (
-                    self.init_embed_depot(nodes[:,0])[:, None, :],
-                    self.init_embed(torch.cat((
-                        nodes[:,1:],
-                        *(input[feat][:, :, None] for feat in features)
-                    ), -1))
-                ),
-                1
-            ), Sk
-        else: #TSP
-            assert nodes.shape == (coords.shape[0], coords.shape[1], 2*(1-self.only_distance) + 2 * self.rank_k_approx), "nodes.shape is {}".format(nodes.shape)
-            return self.init_embed(nodes), Sk
-
-      
+ 
     def _inner(self, input, embeddings, graph_embed=None, force_steps=0):
 
         outputs = []
@@ -485,7 +295,7 @@ class AttentionModel(nn.Module):
     def _precompute(self, embeddings, graph_embed=None, num_steps=1):
 
         # The fixed context projection of the graph embedding is calculated only once for efficiency
-        graph_embed = embeddings.mean(1) if (graph_embed is None or not self.aug_graph_embed) else graph_embed
+        graph_embed = embeddings.mean(1) if graph_embed is None else graph_embed
         # fixed context = (batch_size, 1, embed_dim) to make broadcastable with parallel timesteps
         fixed_context = self.project_fixed_context(graph_embed)[:, None, :]
 

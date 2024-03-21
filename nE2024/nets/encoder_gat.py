@@ -1,11 +1,138 @@
 import torch
 import numpy as np
 from torch import nn
+from torch.nn import DataParallel
+from torch.utils.checkpoint import checkpoint
 from torchvision.ops import MLP
 import math
 
+from nets.init_embed import InitEncoder
+
 from loguru import logger
 
+
+class AttentionEncoder(nn.Module):
+
+    def __init__(self,
+                 embedding_dim,
+                 hidden_dim,
+                 problem,
+                 non_Euc=False,
+                 rank_k_approx=0,
+                 svd_original_edge=False,
+                 mul_sigma_uv=False,
+                 full_svd=False,
+                 only_distance=False,
+                 n_edge_encode_layers=0,
+                 encode_original_edge=False,
+                 rescale_dist=False,
+                 n_encode_layers=2,
+                 normalization='batch',
+                 n_heads=8,
+                 checkpoint_encoder=False,
+                 return_heatmap=False,
+                 umat_embed_layers=3,
+                 aug_graph_embed_layers=3
+                 ):
+        super(AttentionEncoder, self).__init__()
+
+        self.return_heatmap = return_heatmap
+
+        self.embedding_dim = embedding_dim
+        self.hidden_dim = hidden_dim
+        self.n_encode_layers = n_encode_layers
+        self.decode_type = None
+        self.temp = 1.0
+        self.allow_partial = problem.NAME == 'sdvrp'
+        self.is_vrp = problem.NAME == 'cvrp' or problem.NAME == 'sdvrp'
+        self.is_orienteering = problem.NAME == 'op'
+        self.is_pctsp = problem.NAME == 'pctsp'
+
+        self.problem = problem
+        self.n_heads = n_heads
+        self.checkpoint_encoder = checkpoint_encoder
+
+        self.non_Euc = non_Euc
+        # idea 1: node feature augmentation
+        self.rank_k_approx = rank_k_approx
+        self.svd_original_edge = svd_original_edge
+        self.mul_sigma_uv = mul_sigma_uv
+        self.full_svd = full_svd
+        self.only_distance = only_distance
+        # idea 2: edge feature encoding
+        self.n_edge_encode_layers = n_edge_encode_layers
+        self.encode_original_edge = encode_original_edge
+        self.rescale_dist = rescale_dist
+        self.aug_graph_embed = True
+
+        assert n_edge_encode_layers <= n_encode_layers, "n_edge_encode_layer must be <= n_encode_layers"
+        if n_edge_encode_layers > 0:
+            assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
+            # assert n_edge_encode_layers == 1, "Now only support edge encoding at the first layer" # FIXME
+        if encode_original_edge:
+            assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
+
+        self.init_embed = InitEncoder(
+            embedding_dim=embedding_dim,
+            hidden_dim=hidden_dim,
+            problem=problem,
+            non_Euc=non_Euc,
+            rank_k_approx=rank_k_approx,
+            svd_original_edge=svd_original_edge,
+            mul_sigma_uv=mul_sigma_uv,
+            full_svd=full_svd,
+            only_distance=only_distance
+        )
+
+        self.embedder = GraphAttentionEncoder(
+            n_heads=n_heads,
+            embed_dim=embedding_dim,
+            n_layers=self.n_encode_layers,
+            non_Euc=non_Euc,
+            dim_Sk = rank_k_approx * (not mul_sigma_uv),    # if mul_sigma_uv, no longer consider Sk at graph feature level
+            n_edge_encode_layers=n_edge_encode_layers, 
+            normalization=normalization,
+            rescale_dist=rescale_dist,
+            return_u_mat=self.return_heatmap, # if True, return a compatibility matrix; else, return node embeddings & graph embedding
+            umat_embed_layers=umat_embed_layers,
+            aug_graph_embed_layers=aug_graph_embed_layers
+        )
+
+
+    def forward(self, input):
+        """
+        :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
+        :return:
+        """
+        I, N, _ = input['coords'].shape
+        scale_factors_dim = 2 * self.non_Euc + 1
+        if self.rescale_dist:
+            assert input['scale_factors'].shape == (I, scale_factors_dim), "scale_dist must be of shape (I, scale_factors_dim)"
+        else:
+            assert input.get('scale_factors') is None, "scale_dist must be None if rescale_dist is False, but get {}".format(input.get('scale_factors'))
+
+        # if return_heatmap, return a compatibility matrix
+        # else, return node embeddings & graph embedding
+
+        assert self.checkpoint_encoder == False, "hasn't implemented checkpoint :("
+        if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
+            return checkpoint(self.embedder, self._init_embed(input))
+        else:
+            # init_embed: (batch_size, graph_size, embedding_dim) - h^0_i's
+            # S: (batch_size, graph_size, rank_k_approx) - first k singular values of the (rel) distance matrix
+            init_embed, S = self.init_embed(input)
+            
+            if self.n_edge_encode_layers > 0:
+                edge_matrix = input['distance'] if self.encode_original_edge else input['rel_distance']
+            else:
+                edge_matrix = None
+            
+            scale_factors = None if not self.rescale_dist else input['scale_factors']
+            
+            # if self.encoder_only: return u_mat
+            # else: return (embeddings, graph_embed)
+            return self.embedder(init_embed, S, scale_factors=scale_factors, edge_matrix=edge_matrix)
+  
 
 class SkipConnection(nn.Module):
 
@@ -237,13 +364,15 @@ class GraphAttentionEncoder(nn.Module):
             embed_dim,
             n_layers,
             non_Euc=False,
-            rank_k_approx=0,
+            dim_Sk=0,
             n_edge_encode_layers=0,
             rescale_dist=False,
+            aug_graph_embed_layers=3,
             node_dim=None,
             normalization='batch',
             feed_forward_hidden=512,
-            return_u_mat=False
+            return_u_mat=False,
+            umat_embed_layers=3
     ):
         super(GraphAttentionEncoder, self).__init__()
 
@@ -263,30 +392,21 @@ class GraphAttentionEncoder(nn.Module):
                                     return_u_mat=((i == n_layers-1) and return_u_mat))
             for i in range(n_layers)
         ))
-        # else:
-        #     self.layers = [
-        #         MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden=feed_forward_hidden, 
-        #                                 normalization=normalization, encode_edge_matrix=(i < n_edge_encode_layers))
-        #         for i in range(n_layers)
-        #     ]
-
+        
         self.rescale_dist = rescale_dist
-        self.rank_k_approx = rank_k_approx
         self.non_Euc = non_Euc
         self.n_edge_encode_layers = n_edge_encode_layers
 
-        if rescale_dist:
-            scale_factors_dim = 3 if non_Euc else 1
-        else:
-            scale_factors_dim = 0        
-        graph_embed_layers = 3  # TODO: make this a parameter
-        add_graph_dim = rank_k_approx + scale_factors_dim
-        self.add_graph_dim = add_graph_dim
 
+        scale_factors_dim = (2 * non_Euc + 1) * rescale_dist 
+        add_graph_dim = dim_Sk + scale_factors_dim
+        self.add_graph_dim = add_graph_dim
+        
         if not return_u_mat:
-            self.graph_embed = MLP(embed_dim+add_graph_dim, [embed_dim for _ in range(graph_embed_layers)])
+            if add_graph_dim > 0:
+                self.graph_embed = MLP(embed_dim+add_graph_dim, [embed_dim for _ in range(aug_graph_embed_layers)])
         else:
-            self.u_mat_embed = MLP(n_heads+add_graph_dim, [embed_dim for _ in range(graph_embed_layers)]+[2])
+            self.u_mat_embed = MLP(n_heads+add_graph_dim, [embed_dim for _ in range(umat_embed_layers)]+[1])
 
     def forward(self, x, S, scale_factors=None, mask=None, edge_matrix=None):
 
@@ -310,19 +430,23 @@ class GraphAttentionEncoder(nn.Module):
         #     h = self.layers[0]((h, {"edge_matrix":edge_matrix}))
 
         
+        if self.add_graph_dim > 0:
+            S = S if S is not None else torch.zeros(h.size(0), 0, device=h.device)
+            scale_factors = scale_factors if self.rescale_dist else torch.zeros(h.size(0), 0, device=h.device)
+
         
         if not self.return_u_mat:
             # the embedding of the graph is the concatenation of the average of h, the first k singular values
             # (and scale_dist if rescale_dist is True) going through a linear layer
             # (batch_size, embed_dim)
-            if self.rescale_dist:
-                assert scale_factors is not None, "rescale_dist=True but scale_dist is None"
-                graph_init_embed = torch.cat([h.mean(dim=1), S, scale_factors], dim=1)
+            
+            if self.add_graph_dim == 0:
+                graph_embedding = h.mean(dim=1)
             else:
-                graph_init_embed = torch.cat([h.mean(dim=1), S], dim=1)
-            graph_embedding = self.graph_embed(graph_init_embed)
+                # NOTE: we rarely have separate graph features, so we rarely use this branch
+                graph_init_embed = torch.cat([h.mean(dim=1), S, scale_factors], dim=1)
+                graph_embedding = self.graph_embed(graph_init_embed)
                 
-
             return (
                 h,  # (batch_size, graph_size, embed_dim)
                 graph_embedding # (batch_size, embed_dim)
@@ -335,16 +459,12 @@ class GraphAttentionEncoder(nn.Module):
             I, N, _, n_heads = u_mat.size()
             # (I, N, N, n_heads) -> (I, N, N, n_heads+add_graph_dim)
             if self.add_graph_dim > 0:
-                if self.rescale_dist:
-                    assert scale_factors is not None, "rescale_dist=True but scale_dist is None"
-                    graph_features = torch.cat([S, scale_factors], dim=1)
-                else:
-                    graph_features = S
+                graph_features = torch.cat([S, scale_factors], dim=1)
                 # broadcast graph features to the same shape as u_mat
                 graph_features = graph_features.unsqueeze(1).unsqueeze(1).expand(I, N, N, self.add_graph_dim)
                 
                 u_mat = torch.cat([u_mat, graph_features], dim=3)
 
-            u_mat = self.u_mat_embed(u_mat.view(-1, u_mat.size(-1))).view(*u_mat.size()[:3], -1)
-            assert u_mat.size() == (I,N,N,2), f"{u_mat.size()} != [{I}, {N}, {N}, 2]"
+            u_mat = self.u_mat_embed(u_mat.view(-1, u_mat.size(-1))).view(*u_mat.size()[:3], -1).squeeze(-1)
+            assert u_mat.size() == (I,N,N), f"{u_mat.size()} != [{I}, {N}, {N}]"
             return u_mat
