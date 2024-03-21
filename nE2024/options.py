@@ -9,25 +9,34 @@ def get_options(args=None):
     parser = argparse.ArgumentParser(
         description="Attention based model for solving the Travelling Salesman Problem with Reinforcement Learning")
 
-    # Data
+    # [Data]
     parser.add_argument('--problem', default='tsp', help="The problem to solve, default 'tsp'")
     parser.add_argument('--non_Euc', action='store_true', help="Whether the problem is non-Euclidean. If the case, both coords and distance matrix will be provided")
     parser.add_argument('--graph_size', type=int, default=20, help="The size of the problem graph")
     parser.add_argument('--batch_size', type=int, default=512, help='Number of instances per batch during training')
-    parser.add_argument('--epoch_size', type=int, default=1280000, help='Number of instances per epoch during training')
+    parser.add_argument('--batch_per_epoch', type=int, default=2000, help='Number of batches per epoch during training')
+    parser.add_argument('--epoch_size', type=int, default=1280000, help='Number of instances per epoch during training. This will be overwritten by batch_size*batch_per_epoch')
     parser.add_argument('--val_size', type=int, default=10000,
                         help='Number of instances used for reporting validation performance')
     parser.add_argument('--val_dataset', type=str, default=None, help='Dataset file to use for validation')
+    parser.add_argument('--rand_dist', type=str, default='standard', help='"standard" or "complex"') # FIXME: can be combined with data_distribution
+    
+    
+    # [Model]
+    parser.add_argument('--encoder', default='gat', help="Encoder name, 'gat' (default) or 'gcn'")
+    parser.add_argument('--decoder', default='gat', help="Decoder name, 'gat' (default) or 'nAR'")
 
-    # Model
-    parser.add_argument('--model', default='attention', help="Model, 'attention' (default) or 'pointer'")
+    # GAT encoder kwargs
+    init_encoder_kws = ["embedding_dim", "hidden_dim", "problem", "non_Euc", 
+                       "rank_k_approx", "svd_original_edge", "mul_sigma_uv", "full_svd", "only_distance"]
+    gat_encoder_kws = init_encoder_kws + ["n_edge_encode_layers", "encode_original_edge", "rescale_dist", "n_encode_layers", 
+                       "normalization", "n_heads", "checkpoint_encoder", "return_heatmap", "umat_embed_layers", "aug_graph_embed_layers"]
+
     parser.add_argument('--embedding_dim', type=int, default=128, help='Dimension of input embedding')
     parser.add_argument('--hidden_dim', type=int, default=128, help='Dimension of hidden layers in Enc/Dec')
     parser.add_argument('--n_encode_layers', type=int, default=3,
                         help='Number of layers in the encoder/critic network')
-    parser.add_argument('--tanh_clipping', type=float, default=10.,
-                        help='Clip the parameters to within +- this value using tanh. '
-                             'Set to 0 to not perform any clipping.')
+    parser.add_argument('--n_heads', type=int, default=8, help='Number of heads in attention layer')
     parser.add_argument('--normalization', default='batch', help="Normalization type, 'batch' (default) or 'instance'")
     parser.add_argument('--rank_k_approx', type=int, default=0, help='compute rank k-approx of dist matrix to argument node features')
     parser.add_argument('--n_edge_encode_layers', type=int, default=0, help='add edge matrix encodings to the first n attention layers')
@@ -36,17 +45,38 @@ def get_options(args=None):
     parser.add_argument('--full_svd', action='store_true', help='if not, use randomized algorithm to perform faster SVD')
     parser.add_argument('--mul_sigma_uv', action='store_true', help='if True, add sqrt(sigma) u, sqrt(sigma) v to the node features')
     parser.add_argument('--only_distance', action='store_true', help='if True, do not use coordinates in the model') # compatible with rank_k_approx > 0 & svd_original_edge = True
-    parser.add_argument('--rand_dist', type=str, default='standard', help='"standard" or "complex"') # FIXME: can be combined with data_distribution
+    parser.add_argument('--return_heatmap', action='store_true', help='if True, return the heatmap instead of embeddings (Decoder use nAR)')
+    parser.add_argument('--umat_embed_layers', type=int, default=3, help='number of MLP hidden layers for umat embedding')
+    parser.add_argument('--aug_graph_embed_layers', type=int, default=3, help='number of MLP hidden layers for augmented graph embedding')
     parser.add_argument('--rescale_dist', action='store_true', help='if rand_dist is not standard, whether to rescale it to standard')
+    parser.add_argument('--checkpoint_encoder', action='store_true',
+                        help='Set to decrease memory usage by checkpointing encoder')
+
+    
+    # GCN encoder kwargs
+    # TODO
+    
+    # GAT decoder kwargs 
+    gat_decoder_kws = ["embedding_dim", "problem", "update_context_node", "tanh_clipping", "mask_inner", "mask_logits", "n_heads", "shrink_size"]
+    
+    parser.add_argument('--tanh_clipping', type=float, default=10.,
+                        help='Clip the parameters to within +- this value using tanh. '
+                             'Set to 0 to not perform any clipping.')
+    parser.add_argument('--update_context_node', action='store_true', help='if True, use the context node instead of graph embedding for next step context node')
+    parser.add_argument('--shrink_size', type=int, default=None,
+                        help='Shrink the batch size if at least this many instances in the batch are finished'
+                             ' to save memory (default None means no shrinking)')
+
     parser.add_argument('--pomo_sample', type=int, default=1, help='number of samples for pomo')
     parser.add_argument('--rot_sample', type=int, default=1, help='number of samples for Sym-NCO')
-    parser.add_argument('--update_context_node', action='store_true', help='if True, use the context node instead of graph embedding for next step context node')
     parser.add_argument('--shpp', action='store_true', help='if True, train in SHPP mode: fix the first two steps')
     parser.add_argument('--shpp_skip', type=int, default=5, help='when training with SHPP, train original TSP every shpp_skip batches. 0 means inf')
-    parser.add_argument('--aug_graph_embed', action='store_true', help='this is due to a previous mistake. we should always set it as true, while this may ruin the previous trained models')
+    
+    # parser.add_argument('--aug_graph_embed', action='store_true', help='this is due to a previous mistake. we should always set it as true, while this may ruin the previous trained models')
 
 
-    # Training
+    # [Training]
+    parser.add_argument('--optimizer', default='adam', help="Optimizer to use, 'adam' (default) or 'adamW'")
     parser.add_argument('--lr_model', type=float, default=1e-4, help="Set the learning rate for the actor network")
     parser.add_argument('--lr_critic', type=float, default=1e-4, help="Set the learning rate for the critic network")
     parser.add_argument('--lr_decay', type=float, default=1.0, help='Learning rate decay per epoch')
@@ -69,15 +99,11 @@ def get_options(args=None):
                              'used for warmup phase), 0 otherwise. Can only be used with rollout baseline.')
     parser.add_argument('--eval_batch_size', type=int, default=1024,
                         help="Batch size to use during (baseline) evaluation")
-    parser.add_argument('--checkpoint_encoder', action='store_true',
-                        help='Set to decrease memory usage by checkpointing encoder')
-    parser.add_argument('--shrink_size', type=int, default=None,
-                        help='Shrink the batch size if at least this many instances in the batch are finished'
-                             ' to save memory (default None means no shrinking)')
     parser.add_argument('--data_distribution', type=str, default=None,
                         help='Data distribution to use during training, defaults and options depend on problem.')
+    parser.add_argument('--best_val', type=float, default=None, help='Best validation score so far')
 
-    # Misc
+    # [Misc]
     parser.add_argument('--log_step', type=int, default=50, help='Log info every log_step steps')
     parser.add_argument('--log_dir', default='logs', help='Directory to write TensorBoard information to')
     parser.add_argument('--run_name', default='run', help='Name to identify the run')
@@ -97,6 +123,19 @@ def get_options(args=None):
 
 
     opts = parser.parse_args(args)
+
+    if opts.encoder == 'gat':
+        opts.encoder_kwargs = {k: v for k, v in vars(opts).items() if k in gat_encoder_kws}
+    else:
+        raise NotImplementedError
+    
+    if opts.decoder == 'gat':
+        opts.decoder_kwargs = {k: v for k, v in vars(opts).items() if k in gat_decoder_kws}
+    else:
+        raise NotImplementedError
+
+
+
 
     if opts.who is not None:
         opts.run_name = opts.run_name + '_' + opts.who
@@ -124,7 +163,7 @@ def get_options(args=None):
     # so the input batch size is still opts.batch_size (true batch size)
     N1, N2 = opts.pomo_sample, opts.rot_sample
     opts.batch_size = opts.batch_size // (N1*N2)
-    opts.epoch_size = opts.epoch_size // (N1*N2)
+    opts.epoch_size = opts.batch_size * opts.batch_per_epoch
 
     if opts.shpp:
         opts.force_steps = 2
