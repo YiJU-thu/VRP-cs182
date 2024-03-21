@@ -79,6 +79,7 @@ def load_args(filename):
 
 
 def load_model(path, epoch=None):
+    # BUG
     from nets.attention_model import AttentionModel
     from nets.pointer_network import PointerNetwork
 
