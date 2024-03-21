@@ -7,7 +7,7 @@ import math
 from torch.utils.data import DataLoader
 from torch.nn import DataParallel
 
-from nets.attention_model import set_decode_type
+from nets.decoder_gat import set_decode_type
 from utils.log_utils import log_values
 from utils import move_to
 
@@ -135,7 +135,7 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     epoch_duration = time.time() - start_time
     print("Finished epoch {}, took {} s".format(epoch, time.strftime('%H:%M:%S', time.gmtime(epoch_duration))))
 
-    if (opts.checkpoint_epochs != 0 and epoch % opts.checkpoint_epochs == 0) or epoch == opts.n_epochs - 1:
+    def save_model(save_dir, fn, epoch):
         print('Saving model and state...')
         torch.save(
             {
@@ -143,23 +143,40 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
                 'optimizer': optimizer.state_dict(),
                 'rng_state': torch.get_rng_state(),
                 'cuda_rng_state': torch.cuda.get_rng_state_all(),
-                'baseline': baseline.state_dict()
+                'baseline': baseline.state_dict(),
+                'epoch': epoch,
             },
-            os.path.join(opts.save_dir, 'epoch-{}.pt'.format(epoch))
+            os.path.join(save_dir, fn)
         )
-        logger.success(f"epoch-{epoch}.pt saved")
+        logger.success(f"{fn} saved")
         
-        # TODO: only keep 'model' for previously saved checkpoints
-        prev_saved_epoch = epoch - opts.checkpoint_epochs
-        fn = os.path.join(opts.save_dir, 'epoch-{}.pt'.format(prev_saved_epoch))
-        if os.path.exists(fn):
+    def clear_model_states(save_dir, fn):
+        fn_p = os.path.join(save_dir, fn)
+        if os.path.exists(fn_p):
+            saved = torch.load(fn_p)
             torch.save({
-                'model': torch.load(fn)['model']},
-                fn
+                'model': saved['model'],
+                'epoch': saved['epoch'],
+                },
+                fn_p
             )
-            logger.success(f"epoch-{prev_saved_epoch}.pt cleared")
+            logger.success(f"{fn} cleared")
 
+
+    if (opts.checkpoint_epochs != 0 and epoch % opts.checkpoint_epochs == 0) or epoch == opts.n_epochs - 1:
+        print('Saving model and state...')
+        fn_save = 'epoch-{}.pt'.format(epoch)
+        save_model(opts.save_dir, fn_save, epoch)
+        fn_clear = 'epoch-{}.pt'.format(epoch - opts.checkpoint_epochs)
+        clear_model_states(opts.save_dir, fn_clear)
+        
     avg_reward = validate(model, val_dataset, opts)
+    opts.best_val = opts.best_val if opts.best_val is not None else avg_reward+1
+    if avg_reward < opts.best_val:
+        opts.best_val = avg_reward
+        fn_best = 'best.pt'
+        save_model(opts.save_dir, fn_best, epoch)
+        logger.success(f"{fn_best} [{epoch}] saved")
 
     if not opts.no_tensorboard:
         tb_logger.log_value('val_avg_reward', avg_reward, step)
