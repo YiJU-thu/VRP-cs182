@@ -67,7 +67,8 @@ class TSP(object):
 class TSPDataset(Dataset):
     
     def __init__(self, filename=None, dataset=None, size=50, num_samples=1000000, offset=0, 
-                 non_Euc=False, rand_dist="standard", rescale=False, distribution=None, force_triangle_iter=2):
+                 non_Euc=False, rand_dist="standard", rescale=False, distribution=None, force_triangle_iter=2,
+                 normalize_loaded=True):
         super(TSPDataset, self).__init__()
         self.non_Euc = non_Euc
         self.rescale = rescale
@@ -87,7 +88,9 @@ class TSPDataset(Dataset):
             if isinstance(data, dict):
                 # keys are: coords, distance, (rel_distance, scale_factors)
                 data = to_torch(data)
-                self.data = normalize_graph(data, rescale=rescale)
+                if normalize_loaded:
+                    data = normalize_graph(data, rescale=rescale)
+                self.data = data
 
             else:
                 # TODO: old version, inputs would be (I,N,2) ndarray
