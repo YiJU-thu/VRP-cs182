@@ -8,12 +8,15 @@ import torch
 import torch.optim as optim
 from tensorboard_logger import Logger as TbLogger
 
-from nets.critic_network import CriticNetwork
+# from nets.critic_network import CriticNetwork
 from options import get_options
 from train import train_epoch, validate, get_inner_model
 from reinforce_baselines import NoBaseline, ExponentialBaseline, CriticBaseline, RolloutBaseline, WarmupBaseline, PomoBaseline
-from nets.attention_model import AttentionModel
-from nets.pointer_network import PointerNetwork, CriticNetworkLSTM
+# from nets.attention_model import AttentionModel
+# from nets.pointer_network import PointerNetwork, CriticNetworkLSTM
+
+from nets.encoder_decoder import VRPModel
+
 from utils import torch_load_cpu, load_problem
 
 from loguru import logger
@@ -74,34 +77,15 @@ def run(opts):
         print('  [*] Loading data from {}'.format(load_path))
         load_data = torch_load_cpu(load_path)
 
-    # Initialize model
-    model_class = {
-        'attention': AttentionModel,
-        'pointer': PointerNetwork
-    }.get(opts.model, None)
-    assert model_class is not None, "Unknown model: {}".format(model_class)
-    model = model_class(
-        opts.embedding_dim,
-        opts.hidden_dim,
-        problem,
-        non_Euc=opts.non_Euc,
-        rank_k_approx=opts.rank_k_approx,
-        rescale_dist=opts.rescale_dist,
-        svd_original_edge=opts.svd_original_edge,
-        mul_sigma_uv=opts.mul_sigma_uv,
-        full_svd=opts.full_svd,
-        only_distance=opts.only_distance,
-        n_edge_encode_layers=opts.n_edge_encode_layers,
-        encode_original_edge=opts.encode_original_edge,
-        update_context_node=opts.update_context_node,
-        aug_graph_embed=opts.aug_graph_embed,
-        n_encode_layers=opts.n_encode_layers,
-        mask_inner=True,
-        mask_logits=True,
-        normalization=opts.normalization,
-        tanh_clipping=opts.tanh_clipping,
-        checkpoint_encoder=opts.checkpoint_encoder,
-        shrink_size=opts.shrink_size
+    
+    opts.encoder_kwargs['problem'] = problem
+    opts.decoder_kwargs['problem'] = problem
+
+    model = VRPModel(
+        encoder_name=opts.encoder,
+        decoder_name=opts.decoder,
+        encoder_kws=opts.encoder_kwargs,
+        decoder_kws=opts.decoder_kwargs
     ).to(opts.device)
 
     if opts.use_cuda and torch.cuda.device_count() > 1:
@@ -115,28 +99,28 @@ def run(opts):
     # Initialize baseline
     if opts.baseline == 'exponential':
         baseline = ExponentialBaseline(opts.exp_beta)
-    elif opts.baseline == 'critic' or opts.baseline == 'critic_lstm':
-        assert problem.NAME == 'tsp', "Critic only supported for TSP"
-        baseline = CriticBaseline(
-            (
-                CriticNetworkLSTM(
-                    2,
-                    opts.embedding_dim,
-                    opts.hidden_dim,
-                    opts.n_encode_layers,
-                    opts.tanh_clipping
-                )
-                if opts.baseline == 'critic_lstm'
-                else
-                CriticNetwork(
-                    2,
-                    opts.embedding_dim,
-                    opts.hidden_dim,
-                    opts.n_encode_layers,
-                    opts.normalization
-                )
-            ).to(opts.device)
-        )
+    # elif opts.baseline == 'critic' or opts.baseline == 'critic_lstm':
+    #     assert problem.NAME == 'tsp', "Critic only supported for TSP"
+    #     baseline = CriticBaseline(
+    #         (
+    #             CriticNetworkLSTM(
+    #                 2,
+    #                 opts.embedding_dim,
+    #                 opts.hidden_dim,
+    #                 opts.n_encode_layers,
+    #                 opts.tanh_clipping
+    #             )
+    #             if opts.baseline == 'critic_lstm'
+    #             else
+    #             CriticNetwork(
+    #                 2,
+    #                 opts.embedding_dim,
+    #                 opts.hidden_dim,
+    #                 opts.n_encode_layers,
+    #                 opts.normalization
+    #             )
+    #         ).to(opts.device)
+    #     )
     elif opts.baseline == 'rollout':
         baseline = RolloutBaseline(model, problem, opts)
     elif opts.baseline == 'pomo':
@@ -153,7 +137,8 @@ def run(opts):
         baseline.load_state_dict(load_data['baseline'])
 
     # Initialize optimizer
-    optimizer = optim.Adam(
+    optimizers = {"adam": optim.Adam, "adamW": optim.AdamW}
+    optimizer = optimizers[opts.optimizer](
         [{'params': model.parameters(), 'lr': opts.lr_model, 'weight_decay': opts.weight_decay_model}]
         + (
             [{'params': baseline.get_learnable_parameters(), 'lr': opts.lr_critic, 'weight_decay': opts.weight_decay_critic}]
@@ -177,11 +162,13 @@ def run(opts):
     # Start the actual training loop
     # FIXME: this dataset may be too large to fit in memory
     val_dataset = problem.make_dataset(
-        size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, 
+        size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, normalize_loaded=False, # if load from file, do not (repeatedly) normalize
         non_Euc=opts.non_Euc, rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution)
 
     if opts.resume:
-        epoch_resume = int(os.path.splitext(os.path.split(opts.resume)[-1])[0].split("-")[1])
+        epoch_resume = load_data.get('epoch')
+        if epoch_resume is None:    # in old versions, epoch was not saved
+            epoch_resume =  int(os.path.splitext(os.path.split(opts.resume)[-1])[0].split("-")[1])
 
         torch.set_rng_state(load_data['rng_state'])
         if opts.use_cuda:
