@@ -87,7 +87,7 @@ class TSPDataset(Dataset):
             
             if isinstance(data, dict):
                 # keys are: coords, distance, (rel_distance, scale_factors)
-                data = to_torch(data)
+                data = to_torch(data, device="cpu")
                 if normalize_loaded:
                     data = normalize_graph(data, rescale=rescale)
                 self.data = data
