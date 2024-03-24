@@ -161,9 +161,10 @@ def run(opts):
 
     # Start the actual training loop
     # FIXME: this dataset may be too large to fit in memory
-    val_dataset = problem.make_dataset(
-        size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, normalize_loaded=False, # if load from file, do not (repeatedly) normalize
-        non_Euc=opts.non_Euc, rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution)
+    with torch.device("cpu"): # make sure the dataset is on CPU
+        val_dataset = problem.make_dataset(
+            size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, normalize_loaded=False, # if load from file, do not (repeatedly) normalize
+            non_Euc=opts.non_Euc, rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution)
 
     if opts.resume:
         epoch_resume = load_data.get('epoch')

@@ -102,9 +102,11 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
             # choose ==1 so that logged batch val is based on SHPP (while epoch metric is TSP)
 
         t0 = time.perf_counter()
-        batch_dataset = baseline.wrap_dataset(problem.make_dataset(
-            size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, 
-            rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution))
+        with torch.device("cpu"): # make sure the dataset is on CPU
+            batch_dataset = baseline.wrap_dataset(problem.make_dataset(
+                size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, 
+                rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution))
+            
         for batch in tqdm(DataLoader(batch_dataset, batch_size=len(batch_dataset)), disable=opts.no_progress_bar):
             break # only need the first batch
         model.update_time_count(data_gen=time.perf_counter()-t0)    # record data generation time

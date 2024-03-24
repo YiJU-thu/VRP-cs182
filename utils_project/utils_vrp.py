@@ -23,10 +23,10 @@ def to_np(data):
     return data
 
 
-def to_torch(data, device="cpu"):
+def to_torch(data):
     for key in data:
         if isinstance(data[key], np.ndarray):
-            data[key] = torch.from_numpy(data[key]).to(device).float()
+            data[key] = torch.from_numpy(data[key]).float()
     return data
 
 
