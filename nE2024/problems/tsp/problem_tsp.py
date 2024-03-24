@@ -106,7 +106,7 @@ class TSPDataset(Dataset):
                 assert rescale == False
             rescale_tmp = (rand_dist == "complex")
             self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp, force_triangle_iter=force_triangle_iter)
-            if not rescale:
+            if (not rescale) and rescale_tmp:
                 self.data = recover_graph(self.data)
 
 

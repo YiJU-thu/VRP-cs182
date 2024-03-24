@@ -11,6 +11,7 @@ from nets.decoder_gat import set_decode_type
 from utils.log_utils import log_values
 from utils import move_to
 
+import time
 from loguru import logger
 
 def get_inner_model(model):
@@ -100,12 +101,13 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
             # so the initial place holder gets a chance to be trained to find good second step (only apply for shpp mode)
             # choose ==1 so that logged batch val is based on SHPP (while epoch metric is TSP)
 
+        t0 = time.perf_counter()
         batch_dataset = baseline.wrap_dataset(problem.make_dataset(
             size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, 
             rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution))
         for batch in tqdm(DataLoader(batch_dataset, batch_size=len(batch_dataset)), disable=opts.no_progress_bar):
             break # only need the first batch
-
+        model.update_time_count(data_gen=time.perf_counter()-t0)    # record data generation time
 
     # for batch_id, batch in enumerate(tqdm(training_dataloader, disable=opts.no_progress_bar)):
         if not opts.rescale_dist:
@@ -208,21 +210,27 @@ def train_batch(
     # Evaluate model, get costs and log probabilities
     cost, log_likelihood = model(x, force_steps=opts.force_steps_batch)
 
+    t0 = time.perf_counter()
     # Evaluate baseline, get baseline loss if any (only for critic)
     bl_val, bl_loss = baseline.eval(x, cost) if bl_val is None else (bl_val, 0)
+    model.update_time_count(baseline_eval=time.perf_counter()-t0)    # record baseline evaluation time
 
     # Calculate loss
     reinforce_loss = ((cost - bl_val) * log_likelihood).mean()
     loss = reinforce_loss + bl_loss
 
+    t0 = time.perf_counter()
     # Perform backward pass and optimization step
     optimizer.zero_grad()
     loss.backward()
     # Clip gradient norms and get (clipped) gradient norms for logging
     grad_norms = clip_grad_norms(optimizer.param_groups, opts.max_grad_norm)
     optimizer.step()
+    model.update_time_count(model_update=time.perf_counter()-t0)    # record model update time
+
 
     # Logging
     if step % int(opts.log_step) == 0:
+        time_stats = model.time_stats
         log_values(cost, grad_norms, epoch, batch_id, step,
-                   log_likelihood, reinforce_loss, bl_loss, tb_logger, wandb_logger, opts)
+                   log_likelihood, reinforce_loss, bl_loss, time_stats, tb_logger, wandb_logger, opts)

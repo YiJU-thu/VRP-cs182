@@ -1,5 +1,5 @@
 def log_values(cost, grad_norms, epoch, batch_id, step,
-               log_likelihood, reinforce_loss, bl_loss, tb_logger, wandb_logger, opts):
+               log_likelihood, reinforce_loss, bl_loss, time_stats, tb_logger, wandb_logger, opts):
     avg_cost = cost.mean().item()
     grad_norms, grad_norms_clipped = grad_norms
 
@@ -35,20 +35,26 @@ def log_values(cost, grad_norms, epoch, batch_id, step,
             tb_logger.log_value('pomo_avg_cost', c_min.mean().item(), step)
     
     # Log values to wandb
+    log_info = {
+        'avg_cost': avg_cost,
+        'actor_loss': reinforce_loss.item(),
+        'nll': -log_likelihood.mean().item(),
+        'grad_norm': grad_norms[0],
+        'grad_norm_clipped': grad_norms_clipped[0],
+    }
+    if opts.baseline == 'critic':
+        log_info.update({
+            'critic_loss': bl_loss.item(),
+            'critic_grad_norm': grad_norms[1],
+            'critic_grad_norm_clipped': grad_norms_clipped[1],
+        })
+    if opts.baseline == 'pomo':
+        log_info.update({
+            'pomo_div_pct': div_pct,
+            'pomo_avg_cost': c_min.mean().item(),
+        })
+    log_info.update(time_stats)
+    
+    
     if not opts.no_wandb:
-        wandb_logger.log({'avg_cost': avg_cost,
-                          'actor_loss': reinforce_loss.item(),
-                          'nll': -log_likelihood.mean().item(),
-                          'grad_norm': grad_norms[0],
-                          'grad_norm_clipped': grad_norms_clipped[0],
-                          })
-
-        if opts.baseline == 'critic':
-            wandb_logger.log({'critic_loss': bl_loss.item(),
-                              'critic_grad_norm': grad_norms[1],
-                              'critic_grad_norm_clipped': grad_norms_clipped[1],
-                              })
-        
-        if opts.baseline == 'pomo':
-            wandb_logger.log({'pomo_div_pct': div_pct})
-            wandb_logger.log({'pomo_avg_cost': c_min.mean().item()})
+        wandb_logger.log(log_info)  # "step" in wandb is the step of logging

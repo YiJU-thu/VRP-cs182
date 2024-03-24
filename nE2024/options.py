@@ -15,7 +15,7 @@ def get_options(args=None):
     parser.add_argument('--graph_size', type=int, default=20, help="The size of the problem graph")
     parser.add_argument('--batch_size', type=int, default=512, help='Number of instances per batch during training')
     parser.add_argument('--batch_per_epoch', type=int, default=2000, help='Number of batches per epoch during training')
-    parser.add_argument('--epoch_size', type=int, default=1280000, help='Number of instances per epoch during training. This will be overwritten by batch_size*batch_per_epoch')
+    # parser.add_argument('--epoch_size', type=int, default=1280000, help='Number of instances per epoch during training. This will be overwritten by batch_size*batch_per_epoch')
     parser.add_argument('--val_size', type=int, default=10000,
                         help='Number of instances used for reporting validation performance')
     parser.add_argument('--val_dataset', type=str, default=None, help='Dataset file to use for validation')
@@ -83,7 +83,7 @@ def get_options(args=None):
     parser.add_argument('--weight_decay_model', type=float, default=0, help='Weight decay (L2 penalty) for the actor network')
     parser.add_argument('--weight_decay_critic', type=float, default=0, help='Weight decay (L2 penalty) for the critic network')
     parser.add_argument('--eval_only', action='store_true', help='Set this value to only evaluate model')
-    parser.add_argument('--n_epochs', type=int, default=100, help='The number of epochs to train')
+    parser.add_argument('--n_epochs', type=int, default=300, help='The number of epochs to train')
     parser.add_argument('--seed', type=int, default=1234, help='Random seed to use')
     parser.add_argument('--max_grad_norm', type=float, default=1.0,
                         help='Maximum L2 norm for gradient clipping, default 1.0 (0 to disable clipping)')
@@ -154,7 +154,7 @@ def get_options(args=None):
     if opts.bl_warmup_epochs is None:
         opts.bl_warmup_epochs = 1 if opts.baseline == 'rollout' else 0
     assert (opts.bl_warmup_epochs == 0) or (opts.baseline == 'rollout')
-    assert opts.epoch_size % opts.batch_size == 0, "Epoch size must be integer multiple of batch size!"
+    # assert opts.epoch_size % opts.batch_size == 0, "Epoch size must be integer multiple of batch size!"
     
     opts.pomo_sample = 1 if opts.pomo_sample is None else opts.pomo_sample
     opts.rot_sample = 1 if opts.rot_sample is None else opts.rot_sample
