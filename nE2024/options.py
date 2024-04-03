@@ -58,7 +58,8 @@ def get_options(args=None):
     
     # GAT decoder kwargs 
     gat_decoder_kws = ["embedding_dim", "problem", "update_context_node", "tanh_clipping", "mask_inner", "mask_logits", "n_heads", "shrink_size"]
-    
+    nAR_decoder_kws = ["problem", "tanh_clipping", "mask_logits", "shrink_size"]
+
     parser.add_argument('--tanh_clipping', type=float, default=10.,
                         help='Clip the parameters to within +- this value using tanh. '
                              'Set to 0 to not perform any clipping.')
@@ -131,10 +132,12 @@ def get_options(args=None):
     
     if opts.decoder == 'gat':
         opts.decoder_kwargs = {k: v for k, v in vars(opts).items() if k in gat_decoder_kws}
+        assert opts.return_heatmap == False, "heatmap is only used in nAR decoder"
+    elif opts.decoder == 'nAR':
+        opts.decoder_kwargs = {k: v for k, v in vars(opts).items() if k in nAR_decoder_kws}
+        assert opts.return_heatmap == True, "heatmap is only used in nAR decoder"
     else:
         raise NotImplementedError
-
-
 
 
     if opts.who is not None:

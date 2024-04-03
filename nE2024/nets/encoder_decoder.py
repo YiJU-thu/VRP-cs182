@@ -1,8 +1,11 @@
 import torch
 from torch import nn
 
+from loguru import logger
+
 from nets.encoder_gat import AttentionEncoder
 from nets.decoder_gat import AttentionDecoder
+from nets.decoder_nAR import NonAutoRegDecoder
 
 import time
 
@@ -15,7 +18,7 @@ class VRPModel(nn.Module):
 
     decoders = {
         "gat": AttentionDecoder,
-        "nAR": None
+        "nAR": NonAutoRegDecoder,
     }
 
     def __init__(self, encoder_name, decoder_name, encoder_kws, decoder_kws):
