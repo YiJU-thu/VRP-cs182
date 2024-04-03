@@ -66,9 +66,10 @@ class AttentionEncoder(nn.Module):
         self.aug_graph_embed = True
 
         assert n_edge_encode_layers <= n_encode_layers, "n_edge_encode_layer must be <= n_encode_layers"
+        if return_heatmap:
+            assert n_edge_encode_layers <= n_encode_layers - 1, "no mix scores at the last layer" # FIXME
         if n_edge_encode_layers > 0:
             assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
-            # assert n_edge_encode_layers == 1, "Now only support edge encoding at the first layer" # FIXME
         if encode_original_edge:
             assert non_Euc == True, "edge encoding is only supported for non-Euclidean input"
 
