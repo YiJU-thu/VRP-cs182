@@ -5,7 +5,7 @@ import numpy as np
 import time
 from loguru import logger
 
-@logger.catch
+# @logger.catch
 def solve_lkh(directory, name, dist_mat, demand=None, depot=None, capacity=None, scale=10000, runs=1, problem='tsp'):
     executable = '/home/yiju/install/LKH-3.0.6/LKH'
     problem_filename = os.path.join(directory, "{}.lkh{}.vrp".format(name, runs))

@@ -45,9 +45,10 @@ def concorde_atsp_matrix(dist_mat, scale=1, inf_M=1e7, big_M=1):
     return extend_mat
 
 
-@logger.catch
+# @logger.catch
 def concorde_atsp_2d(dist_mat, scale=1, big_M=100, inf_M=1e7, tmp_idx="", time_bound=-1):
-    
+    from loguru import logger # this works for dask parallel
+
     N = dist_mat.shape[0]
 
     extend_mat = concorde_atsp_matrix(dist_mat, scale=scale, big_M=big_M, inf_M=inf_M)
@@ -56,7 +57,7 @@ def concorde_atsp_2d(dist_mat, scale=1, big_M=100, inf_M=1e7, tmp_idx="", time_b
     prob = Problem.from_matrix(extend_mat.astype(np.int32))
     
     # FIXME: this is wired, but the current pyconcorde do not support solve it directly
-    tmp_fn = "tsp_NoTrack_test" + tmp_idx + ".tsp"
+    tmp_fn = "tsp_NoTrack_" + tmp_idx + ".tsp"
     prob.to_tsp(tmp_fn)
     solver = TSPSolver.from_tspfile(tmp_fn)
     
@@ -87,8 +88,9 @@ def concorde_atsp_2d(dist_mat, scale=1, big_M=100, inf_M=1e7, tmp_idx="", time_b
     return obj_actual, route1, t
 
 
-@logger.catch
+# @logger.catch
 def concorde_euc_2d(coords, scale=1, time_bound=-1):
+    from loguru import logger # this works for dask parallel
     xs, ys = coords[:,0], coords[:,1]
     xs, ys = xs * scale, ys * scale
     solver = TSPSolver.from_data(xs=xs, ys=ys, norm="EUC_2D")
@@ -111,6 +113,7 @@ def concorde_euc_2d(coords, scale=1, time_bound=-1):
 
 
 def solve_one_instance(instance, type="EUC_2D", solver="concorde", info="", problem="tsp", args=None, **kws):
+    from loguru import logger # this works for dask parallel
     try:
         problem = problem
         if not (solver=="lkh" and type=="ATSP"):
@@ -119,7 +122,8 @@ def solve_one_instance(instance, type="EUC_2D", solver="concorde", info="", prob
             opt_value, route, t = concorde_euc_2d(instance, **kws)
         elif type == "ATSP":
             if solver == "concorde":
-                opt_value, route, t = concorde_atsp_2d(instance['distance'], **kws)
+                idx = info.split("=")[1]
+                opt_value, route, t = concorde_atsp_2d(instance['distance'], tmp_idx=idx, **kws)
             elif solver == "lkh":   # FIXME: can write in a more elegant way
                 directory = args.tmp_log_dir
                 if not os.path.exists(directory):
@@ -198,6 +202,7 @@ if __name__ == "__main__":
     parser.add_argument('--log', type=str, default="concorde_log.log", help='log filename')
     parser.add_argument('--tmp_log_dir', type=str, default="log_NoTrack", help='tmp log directory that stores intermediate log files')
     parser.add_argument('--ignore_NoTrack', action='store_true', help='remove NoTrack in file names so that the solutions will be tracked')
+    parser.add_argument('--dask_parallel', action='store_true', help='use dask parallel to solve instances')
     
     args = parser.parse_args()
     
@@ -274,30 +279,69 @@ if __name__ == "__main__":
         else:   # tuple, list, ndarray ...
             return data[idx]
 
-
-    for i in range(I):
-        idx = to_do_idx[i]
-        instance = get_data_item(data, idx)
-        if args.type == "ATSP": 
-            opt_value, route, t = solve_one_instance(instance=instance, type="ATSP", problem=args.problem,
-                    info=f"id={idx}", scale=args.scale, big_M=args.big_M, time_bound=args.time_bound, solver=args.solver, args=args)
-        elif args.type == "EUC_2D":
-            assert args.solver == "concorde", "Now only concorde support EUC_2D"
-            opt_value, route, t = solve_one_instance(instance=instance, type="EUC_2D", problem=args.problem,
-                    info=f"id={idx}", scale=args.scale, time_bound=args.time_bound, solver=args.solver, args=args)
+    if args.dask_parallel:
+        from dask.distributed import Client
+        client = Client()
+        logger.info(client)
+        n_cores = sum(v for k, v in client.ncores().items())
+        n_jobs = n_cores * args.save
+        logger.info(f"n_jobs: {n_jobs}")
         
-        res["obj"][idx] = opt_value
-        res["time"][idx] = t
-        res["tour"][idx] = route
+        i = 0
 
-        if (i+1) % args.clear == 0 and args.solver == "concorde":
-            sleep(0.5)
-            clear_concorde_files()
-        if (i+1) % args.save == 0:
+        while i < I:
+            idxs = to_do_idx[i:min(I, i+n_jobs)]
+            instances = [get_data_item(data, idx) for idx in idxs]
+            if args.type == "ATSP":
+                futures = [client.submit(solve_one_instance, instances[j], type="ATSP", problem=args.problem,
+                        info=f"id={idxs[j]}", scale=args.scale, big_M=args.big_M, time_bound=args.time_bound, solver=args.solver, args=args) for j in range(len(idxs))]
+            elif args.type == "EUC_2D":
+                assert args.solver == "concorde", "Now only concorde support EUC_2D"
+                futures = client.map(solve_one_instance, instances, type="EUC_2D", problem=args.problem,
+                        info=[f"id={idx}" for idx in idxs], scale=args.scale, time_bound=args.time_bound, solver=args.solver, args=args)
+            res_lst = client.gather(futures)
+            for j, idx in enumerate(idxs):
+                opt_value, route, t = res_lst[j]
+                res["obj"][idx] = opt_value
+                res["time"][idx] = t
+                res["tour"][idx] = route
+            if args.solver == "concorde":
+                sleep(0.5)
+                clear_concorde_files()
             with open(out_fn, "wb") as f:
                 pickle.dump(res, f)
             log_stats(res)
-    
+
+            i += len(idxs)
+
+
+    else:
+        for i in range(I):
+            
+            idx = to_do_idx[i]
+            instance = get_data_item(data, idx)
+            if args.type == "ATSP": 
+                opt_value, route, t = solve_one_instance(instance=instance, type="ATSP", problem=args.problem,
+                        info=f"id={idx}", scale=args.scale, big_M=args.big_M, time_bound=args.time_bound, solver=args.solver, args=args)
+            elif args.type == "EUC_2D":
+                assert args.solver == "concorde", "Now only concorde support EUC_2D"
+                opt_value, route, t = solve_one_instance(instance=instance, type="EUC_2D", problem=args.problem,
+                        info=f"id={idx}", scale=args.scale, time_bound=args.time_bound, solver=args.solver, args=args)
+            
+            res["obj"][idx] = opt_value
+            res["time"][idx] = t
+            res["tour"][idx] = route
+
+            if (i+1) % args.clear == 0 and args.solver == "concorde":
+                sleep(0.5)
+                clear_concorde_files()
+            if (i+1) % args.save == 0:
+                with open(out_fn, "wb") as f:
+                    pickle.dump(res, f)
+                log_stats(res)
+            
+
+
     sleep(1)
     if args.solver == "concorde":
         clear_concorde_files()
