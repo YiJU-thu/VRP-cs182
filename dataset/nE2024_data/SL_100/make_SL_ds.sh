@@ -1,5 +1,5 @@
 # run this under dataset directory
-save_dir="nE2024_data/test"
+save_dir="nE2024_data/SL_100"
 num_graphs=5000
 for ((i=101; i<=120; i++))
 do
