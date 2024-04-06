@@ -25,8 +25,9 @@ def solve_lkh(directory, name, dist_mat, demand=None, depot=None, capacity=None,
     else:
         raise KeyError("Unknown problem: {}".format(problem))
 
+    #TODO: make these parameters configurable
     params = {"PROBLEM_FILE": problem_filename, "OUTPUT_TOUR_FILE": tour_filename, "RUNS": runs, "SEED": 1234,
-              "MAX_TRIALS": 10000 if problem == 'tsp' else 1000, "TIME_LIMIT": 600}
+              "MAX_TRIALS": 10000 if problem == 'tsp' else 1000, "TIME_LIMIT": 1800}
     write_lkh_par(param_filename, params)
 
     with open(log_filename, 'w') as f:
