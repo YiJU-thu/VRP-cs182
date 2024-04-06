@@ -203,7 +203,8 @@ if __name__ == "__main__":
     parser.add_argument('--tmp_log_dir', type=str, default="log_NoTrack", help='tmp log directory that stores intermediate log files')
     parser.add_argument('--ignore_NoTrack', action='store_true', help='remove NoTrack in file names so that the solutions will be tracked')
     parser.add_argument('--dask_parallel', action='store_true', help='use dask parallel to solve instances')
-    
+    parser.add_argument('--n_workers', type=int, default=None, help='number of workers in dask parallel')
+
     args = parser.parse_args()
     
     data_dir = os.path.join(_curr_dir, '../dataset')
@@ -281,7 +282,11 @@ if __name__ == "__main__":
 
     if args.dask_parallel:
         from dask.distributed import Client
-        client = Client()
+
+        address = os.getenv("SCHED")    # HPC: get the scheduler address
+        address = address + ":8786" if address is not None else None
+
+        client = Client(address=address, n_workers=args.n_workers)
         logger.info(client)
         n_cores = sum(v for k, v in client.ncores().items())
         n_jobs = n_cores * args.save
