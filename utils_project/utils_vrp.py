@@ -345,9 +345,6 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
     points = Uniform(0, 1).sample(sample_shape=(num_graphs, n, 2))
     assert points.shape == (num_graphs, n, 2)
 
-    euclidean_distance_matrix = get_euclidean_dist_matrix(points)
-    assert euclidean_distance_matrix.shape == (num_graphs, n, n)
-
     if not non_Euc:
         data = {"coords": points, "scale_factors": scale_factors}
     else:
@@ -356,6 +353,9 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
         # so, relative matrix X = X1 * (1+X2)
         # further, element in X1 follows a [log-normal] distribution, mu=0, sigma=sym_std(=0.5)
         #       and element in X2 follows a [normal] distribution, mu=0, sigma=asym_std(=0.05)
+
+        euclidean_distance_matrix = get_euclidean_dist_matrix(points)
+        assert euclidean_distance_matrix.shape == (num_graphs, n, n)
 
         sym_std = 0.5
         sym_log = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))

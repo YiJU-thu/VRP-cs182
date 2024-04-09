@@ -119,7 +119,9 @@ def solve_one_instance(instance, type="EUC_2D", solver="concorde", info="", prob
         if not (solver=="lkh" and type=="ATSP"):
             problem == "tsp", "CVRP is supported for ATSP AND lkh solver now"
         if type == "EUC_2D":
-            opt_value, route, t = concorde_euc_2d(instance, **kws)
+            coords = instance['coords'] if isinstance(instance, dict) else instance
+            assert coords.shape[1] == 2, "invalid coords shape"
+            opt_value, route, t = concorde_euc_2d(coords, **kws)
         elif type == "ATSP":
             if solver == "concorde":
                 idx = info.split("=")[1]
@@ -221,7 +223,7 @@ if __name__ == "__main__":
     if args.type == "ATSP":
         I_tot = len(data["distance"])   # number of instances, it may be a list (each instance different size), or a np.ndarray w/ shape (I,N,N)
     if args.type == "EUC_2D":
-        I_tot = len(data)
+        I_tot = len(data) if isinstance(data, np.ndarray) else len(data["coords"])
     if args.recover_graph:
         data = recover_graph_np(data)
     
