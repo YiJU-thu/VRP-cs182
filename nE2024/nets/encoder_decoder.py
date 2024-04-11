@@ -55,21 +55,31 @@ class VRPModel(nn.Module):
         """
 
         t0 = time.perf_counter()
-        if self.decoder_name == "gat":
-            embeddings, graph_embed = self.encoder(input)
-            t1 = time.perf_counter()
-            res = self.decoder(input, embeddings, graph_embed=graph_embed, **kws)
-            
+        embed = self._encoder(input)    # embed is a dict, keys specific to the encoder & compatible with the decoder
+        embed.update(kws)
+
         elif self.decoder_name == "nAR":
             heatmap = self.encoder(input)
             t1 = time.perf_counter()
-            res = self.decoder(input, heatmap, **kws)
+        res = self._decoder(input, **embed)
+
+
+        # NOTE: old version, no longer needed
+        # if self.decoder_name == "gat":
+        #     embeddings, graph_embed = self._encoder(input)
+        #     t1 = time.perf_counter()
+        #     res = self._decoder(input, embeddings, graph_embed=graph_embed, **kws)
+            
+        # elif self.decoder_name == "nAR":
+        #     heatmap = self._encoder(input)
+        #     t1 = time.perf_counter()
+        #     res = self._decoder(input, heatmap, **kws)
         
         t2 = time.perf_counter()
         self.update_time_count(encoder_forward=t1-t0, decoder_forward=t2-t1)
         
         return res
-        # sampling strategies should be implemented here?
+
     
     def set_decode_type(self, decode_type, temp=None):
         self.decoder.set_decode_type(decode_type, temp)
