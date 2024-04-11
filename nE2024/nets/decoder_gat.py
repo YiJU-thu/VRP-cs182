@@ -137,15 +137,21 @@ class AttentionDecoder(nn.Module):
 
 
     def beam_search(self, *args, **kwargs):
+        # NOTE: updated in Apr-2024, this will no longer be used
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         return self.problem.beam_search(*args, **kwargs, model=self)
 
     def precompute_fixed(self, input):
+        # NOTE: updated in Apr-2024, this will no longer be used
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         embeddings, graph_embed = self.get_init_embed(input)
         # Use a CachedLookup such that if we repeatedly index this object with the same index we only need to do
         # the lookup once... this is the case if all elements in the batch have maximum batch size
         return CachedLookup(self._precompute(embeddings, graph_embed))
 
     def propose_expansions(self, beam, fixed, expand_size=None, normalize=False, max_calc_batch_size=4096):
+        # NOTE: updated in Apr-2024, this will no longer be used
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         # First dim = batch_size * cur_beam_size
         log_p_topk, ind_topk = compute_in_batches(
             lambda b: self._get_log_p_topk(fixed[b.ids], b.state, k=expand_size, normalize=normalize),
@@ -257,6 +263,8 @@ class AttentionDecoder(nn.Module):
         return torch.stack(outputs, 1), torch.stack(sequences, 1)
 
     def sample_many(self, input, batch_rep=1, iter_rep=1):
+        # NOTE: updated in Apr-2024, this will no longer be used
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         """
         :param input: (batch_size, graph_size, node_dim) input node features
         :return:
@@ -314,11 +322,14 @@ class AttentionDecoder(nn.Module):
         return AttentionModelFixed(embeddings, fixed_context, *fixed_attention_node_data)
 
     def _get_log_p_topk(self, fixed, state, k=None, normalize=True):
+        # NOTE: updated in Apr-2024, this will no longer be used
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
+
         log_p, mask, glimpse = self._get_log_p(fixed, state, normalize=normalize)
 
         # Return topk
         if k is not None and k < log_p.size(-1):
-            return log_p.topk(k, -1)
+            return log_p.topk(k, -1)    # Tensor.topk(k, dim) returns (values, indices)
 
         # Return all, note different from torch.topk this does not give error if less than k elements along dim
         return (

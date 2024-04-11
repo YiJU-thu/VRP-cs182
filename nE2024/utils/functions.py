@@ -9,6 +9,7 @@ from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import Pool
 import torch.nn.functional as F
 
+from loguru import logger
 
 def load_problem(name):
     from problems import TSP, CVRP, SDVRP, OP, PCTSPDet, PCTSPStoch
@@ -80,8 +81,9 @@ def load_args(filename):
 
 def load_model(path, epoch=None):
     # BUG
-    from nets.attention_model import AttentionModel
-    from nets.pointer_network import PointerNetwork
+    # from nets.attention_model import AttentionModel
+    # from nets.pointer_network import PointerNetwork
+    from nets.encoder_decoder import VRPModel
 
     if os.path.isfile(path):
         model_filename = path
@@ -101,36 +103,16 @@ def load_model(path, epoch=None):
 
     problem = load_problem(args['problem'])
 
-    model_class = {
-        'attention': AttentionModel,
-        'pointer': PointerNetwork
-    }.get(args.get('model', 'attention'), None)
-    assert model_class is not None, "Unknown model: {}".format(model_class)
+    args["encoder_kwargs"]["problem"] = problem
+    args["decoder_kwargs"]["problem"] = problem
 
-    model = model_class(
-        args['embedding_dim'],
-        args['hidden_dim'],
-        problem,
-        n_encode_layers=args['n_encode_layers'],
-        # to be compatible with old models
-        non_Euc=args.get('non_Euc', False),
-        rank_k_approx=args.get('rank_k_approx',0),
-        rescale_dist=args.get('rescale_dist', False),
-        svd_original_edge=args.get('svd_original_edge', False),
-        mul_sigma_uv=args.get('mul_sigma_uv', False),
-        full_svd=args.get('full_svd', False),
-        only_distance=args.get('only_distance', False),
-        n_edge_encode_layers=args.get('n_edge_encode_layers', 0),
-        encode_original_edge=args.get('encode_original_edge', False),
-        update_context_node=args.get('update_context_node', False),
-        aug_graph_embed=args.get('aug_graph_embed', False), 
-        mask_inner=True,
-        mask_logits=True,
-        normalization=args['normalization'],
-        tanh_clipping=args['tanh_clipping'],
-        checkpoint_encoder=args.get('checkpoint_encoder', False),
-        shrink_size=args.get('shrink_size', None)
+    model = VRPModel(
+        encoder_name=args["encoder"],
+        decoder_name=args["decoder"],
+        encoder_kws=args["encoder_kwargs"],
+        decoder_kws=args["decoder_kwargs"]
     )
+    
     # Overwrite model parameters by parameters to load
     load_data = torch_load_cpu(model_filename)
     model.load_state_dict({**model.state_dict(), **load_data.get('model', {})})
@@ -193,19 +175,19 @@ def do_batch_rep(v, n):
     return v[None, ...].expand(n, *v.size()).contiguous().view(-1, *v.size()[1:])
 
 
-def sample_many(inner_func, get_cost_func, input, batch_rep=1, iter_rep=1):
+def sample_many(decoder, input, embed, batch_rep=1, iter_rep=1):
     """
+    NOTE: this method has been modified compared with AM2019
     :param input: (batch_size, graph_size, node_dim) input node features
     :return:
     """
-    input = do_batch_rep(input, batch_rep)
+    # logger.debug(f"Sampling: batch_rep {batch_rep} * iter_rep={iter_rep}")
+    input, embed = do_batch_rep((input, embed), batch_rep)
 
     costs = []
     pis = []
     for i in range(iter_rep):
-        _log_p, pi = inner_func(input)
-        # pi.view(-1, batch_rep, pi.size(-1))
-        cost, mask = get_cost_func(input, pi)
+        cost, _log_p, pi = decoder(input, return_pi=True, **embed)
 
         costs.append(cost.view(batch_rep, -1).t())
         pis.append(pi.view(batch_rep, -1, pi.size(-1)).transpose(0, 1))

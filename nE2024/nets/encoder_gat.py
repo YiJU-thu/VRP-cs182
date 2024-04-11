@@ -448,10 +448,10 @@ class GraphAttentionEncoder(nn.Module):
                 graph_init_embed = torch.cat([h.mean(dim=1), S, scale_factors], dim=1)
                 graph_embedding = self.graph_embed(graph_init_embed)
                 
-            return (
-                h,  # (batch_size, graph_size, embed_dim)
-                graph_embedding # (batch_size, embed_dim)
-            )
+            return {
+                "embeddings": h,  # (batch_size, graph_size, embed_dim)
+                "graph_embed": graph_embedding # (batch_size, embed_dim)
+            }
 
         else:
             # Here [h] is the last compatibility matrix (attn)
@@ -468,4 +468,4 @@ class GraphAttentionEncoder(nn.Module):
 
             u_mat = self.u_mat_embed(u_mat.view(-1, u_mat.size(-1))).view(*u_mat.size()[:3], -1).squeeze(-1)
             assert u_mat.size() == (I,N,N), f"{u_mat.size()} != [{I}, {N}, {N}]"
-            return u_mat
+            return {"heatmap": u_mat}
