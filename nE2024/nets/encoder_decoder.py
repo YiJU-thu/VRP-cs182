@@ -26,16 +26,32 @@ class VRPModel(nn.Module):
 
         self.encoder_name = encoder_name
         self.decoder_name = decoder_name
-        self.encoder = self.encoders[encoder_name](**encoder_kws)
-        self.decoder = self.decoders[decoder_name](**decoder_kws)
+
+        # avoid en/decoders being called directly outside the model
+        self._encoder = self.encoders[encoder_name](**encoder_kws)
+        self._decoder = self.decoders[decoder_name](**decoder_kws)
+        # NOTE: do not change attr names if the model params are to be loaded from a file
+        # so in old versions, as I use self.encoder/decoder, I still need these names to have the params correctly loaded
+        self.encoder, self.decoder = self._encoder, self._decoder
+
+
+
         self.time_count = {
             "encoder_forward": 0, "decoder_forward": 0, "model_update": 0, "data_gen": 0, "baseline_eval": 0,
         }
+
+
+        self.rescale_dist = self._encoder.rescale_dist
+        self.non_Euc = self._encoder.non_Euc
+        self.problem = self._encoder.problem
+
+
     
     def forward(self, input, **kws):
         """
         :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
         :return:
+        FIXME: in the notes, make it clear what **kw probably are
         """
 
         t0 = time.perf_counter()
