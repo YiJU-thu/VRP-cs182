@@ -47,7 +47,8 @@ class TSP(object):
     @staticmethod
     def beam_search(input, beam_size, expand_size=None,
                     compress_mask=False, model=None, max_calc_batch_size=4096):
-
+        # NOTE: updated in Apr-2024, this will no longer be used
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         assert model is not None, "Provide model"
 
         fixed = model.precompute_fixed(input)
