@@ -92,13 +92,13 @@ class VRPModel(nn.Module):
         return sample_many(self._decoder, input, embed, batch_rep, iter_rep)
     
 
-    def beam_search(self, input, beam_size, compress_mask, max_calc_batch_size):
+    def beam_search(self, input, beam_size, compress_mask, max_calc_batch_size, sgbs=False, gamma = 2):
         # NOTE: for different problems, the input may be different (in old versions)
         fixed = self.precompute_fixed(input)
 
-        def propose_expansions(beam):
+        def propose_expansions(beam, sgbs = sgbs):
             return self.propose_expansions(
-                beam, fixed, beam_size, normalize=True, max_calc_batch_size=max_calc_batch_size
+                beam, fixed, beam_size*(1-sgbs)+gamma*sgbs, normalize=True, max_calc_batch_size=max_calc_batch_size, sgbs = sgbs
             )
 
         state = self.problem.make_state(
@@ -112,7 +112,7 @@ class VRPModel(nn.Module):
         # NOTE: _precompute method needs to be implemented in each decoder
         return CachedLookup(self._decoder._precompute(**embed)) # TODO: what is this method doing?
     
-    def propose_expansions(self, beam, fixed, expand_size, normalize, max_calc_batch_size):
+    def propose_expansions(self, beam, fixed, expand_size, normalize, max_calc_batch_size, sgbs):
         # First dim = batch_size * cur_beam_size
         log_p_topk, ind_topk = compute_in_batches(
             lambda b: self._get_log_p_topk(fixed[b.ids], b.state, k=expand_size, normalize=normalize),
@@ -120,10 +120,20 @@ class VRPModel(nn.Module):
         )
 
         assert log_p_topk.size(1) == 1, "Can only have single step"
-        
-        # NOTE: this is the key difference between BS & SGBS
-        score_expand = beam.score[:, None] + log_p_topk[:, 0, :]    # This will broadcast, calculate log_p (score) of expansions
 
+        # NOTE: this is the key difference between BS & SGBS
+        if not sgbs:    
+            score_expand = beam.score[:, None] + log_p_topk[:, 0, :]    # This will broadcast, calculate log_p (score) of expansions
+
+        else:
+            ind_topk_old = ind_topk
+            rollout_cost_topk, ind_topk = compute_in_batches(
+            lambda b: self._get_rollout_cost_topk(fixed[b.ids], b.state, log_p_topk[b.ids], ind_topk_old[b.ids],
+                                               k=expand_size, normalize=normalize),
+            max_calc_batch_size, beam, n=beam.size()
+            )
+            score_expand = rollout_cost_topk[:, 0, :]    # This will broadcast, calculate log_p (score) of expansions
+        
         # We flatten the action as we need to filter and this cannot be done in 2d
         flat_action = ind_topk.view(-1)
         flat_score = score_expand.view(-1)
@@ -156,6 +166,13 @@ class VRPModel(nn.Module):
             log_p,
             torch.arange(log_p.size(-1), device=log_p.device, dtype=torch.int64).repeat(log_p.size(0), 1)[:, None, :]
         )
+
+    def _rollout_simulation(self, fixed, state, log_p_topk, ind_topk, k, normalize):
+        
+        rollout_cost = None
+        return rollout_cost
+    
+
 
     def update_time_count(self, **kw):
         for key in kw:

@@ -208,6 +208,7 @@ def get_eval_options(args=None):
     parser.add_argument('--results_dir', default='results', help="Name of results directory")
     parser.add_argument('--multiprocessing', action='store_true',
                         help='Use multiprocessing to parallelize over multiple GPUs')
+    parser.add_argument('--gamma', type=int, default=2, help='Size for expansion factor in SGBS')
 
     opts = parser.parse_args(args)
     opts.f = None
