@@ -8,6 +8,7 @@ from utils.beam_search import beam_search, CachedLookup
 from utils.tensor_functions import compute_in_batches
 
 from nets.encoder_gat import AttentionEncoder
+from nets.encoder_gcn import GCNEncoder
 from nets.decoder_gat import AttentionDecoder
 from nets.decoder_nAR import NonAutoRegDecoder
 
@@ -17,7 +18,7 @@ class VRPModel(nn.Module):
 
     encoders = {
         "gat": AttentionEncoder,
-        "gcn": None
+        "gcn": GCNEncoder,
     }
 
     decoders = {

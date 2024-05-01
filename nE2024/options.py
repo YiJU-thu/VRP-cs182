@@ -27,9 +27,9 @@ def get_options(args=None):
     parser.add_argument('--decoder', default='gat', help="Decoder name, 'gat' (default) or 'nAR'")
 
     # GAT encoder kwargs
-    init_encoder_kws = ["embedding_dim", "hidden_dim", "problem", "non_Euc", 
-                       "rank_k_approx", "svd_original_edge", "mul_sigma_uv", "full_svd", "only_distance"]
-    gat_encoder_kws = init_encoder_kws + ["n_edge_encode_layers", "encode_original_edge", "rescale_dist", "n_encode_layers", 
+    gat_init_encoder_kws = ["embedding_dim", "hidden_dim", "problem", "non_Euc", 
+                       "rank_k_approx", "svd_original_edge", "mul_sigma_uv", "full_svd", "only_distance",]
+    gat_encoder_kws = gat_init_encoder_kws + ["n_edge_encode_layers", "encode_original_edge", "rescale_dist", "n_encode_layers", 
                        "normalization", "n_heads", "checkpoint_encoder", "return_heatmap", "umat_embed_layers", "aug_graph_embed_layers"]
 
     parser.add_argument('--embedding_dim', type=int, default=128, help='Dimension of input embedding')
@@ -54,7 +54,13 @@ def get_options(args=None):
 
     
     # GCN encoder kwargs
-    # TODO
+    parser.add_argument('--edge_embedding_dim', type=int, default=None, help='Dimension of edge embedding')
+    parser.add_argument('--adj_mat_embedding_dim', type=int, default=None, help='Dimension of adjacency matrix embedding')
+    parser.add_argument('--kNN', type=int, default=20, help='Number of nearest neighbors to consider in the adjacency matrix')
+    parser.add_argument('--gcn_aggregation', default='sum', help="Aggregation type, 'mean' or 'sum' (default)")
+    gcn_init_encoder_kws = gat_init_encoder_kws + ["edge_embedding_dim", "adj_mat_embedding_dim", "kNN"]
+    gcn_encoder_kws = gcn_init_encoder_kws + ["encode_original_edge", "rescale_dist", "n_encode_layers", "normalization", 
+                                              "checkpoint_encoder", "return_heatmap", "umat_embed_layers", "aug_graph_embed_layers", "gcn_aggregation"]
     
     # GAT decoder kwargs 
     gat_decoder_kws = ["embedding_dim", "problem", "update_context_node", "tanh_clipping", "mask_inner", "mask_logits", "n_heads", "shrink_size"]
@@ -127,8 +133,8 @@ def get_options(args=None):
 
     if opts.encoder == 'gat':
         opts.encoder_kwargs = {k: v for k, v in vars(opts).items() if k in gat_encoder_kws}
-    else:
-        raise NotImplementedError
+    elif opts.encoder == 'gcn':
+        opts.encoder_kwargs = {k: v for k, v in vars(opts).items() if k in gcn_encoder_kws}
     
     if opts.decoder == 'gat':
         opts.decoder_kwargs = {k: v for k, v in vars(opts).items() if k in gat_decoder_kws}

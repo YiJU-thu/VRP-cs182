@@ -1,8 +1,7 @@
 import torch
 from torch import nn
 
-from utils.tensor_functions import randomized_svd_batch
-
+from utils.tensor_functions import randomized_svd_batch, knn_adjacency_torch
 
 from loguru import logger
 
@@ -19,6 +18,9 @@ class InitEncoder(nn.Module):
                  mul_sigma_uv=False,
                  full_svd=False,
                  only_distance=False,
+                 edge_embedding_dim=None,
+                 adj_mat_embedding_dim=None,
+                 kNN=-1,
                  ):
         super(InitEncoder, self).__init__()
 
@@ -39,6 +41,10 @@ class InitEncoder(nn.Module):
         self.mul_sigma_uv = mul_sigma_uv
         self.full_svd = full_svd
         self.only_distance = only_distance
+        
+        self.embed_edge = (edge_embedding_dim is not None)
+        self.embed_adj_mat = (adj_mat_embedding_dim is not None)
+        self.kNN = kNN
 
         # assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
         # if only_distance:
@@ -70,6 +76,14 @@ class InitEncoder(nn.Module):
 
         self.init_embed = nn.Linear(node_dim, embedding_dim)
 
+        if edge_embedding_dim is not None:
+            self.edge_val_embed = nn.Linear(1, edge_embedding_dim)
+        if adj_mat_embedding_dim is not None:
+            assert kNN != -1, "kNN < n, otherwise all 1 matrix"
+            self.edge_adj_embed = nn.Embedding(2, adj_mat_embedding_dim)    # class 0, 1
+
+
+
 
     def forward(self, input):
         """
@@ -77,7 +91,7 @@ class InitEncoder(nn.Module):
         :return:
         """
 
-        # return init_embed, Sk
+        # return init_embed, (edge_embed), Sk
 
         return self.get_init_embed(input)
 
@@ -100,7 +114,18 @@ class InitEncoder(nn.Module):
 
         # ================================================
 
-        return self._init_embed(input) # (init_embed, Sk)
+        x, S = self._init_embed(input) # (init_embed, Sk)
+        if not self.embed_edge:
+            return x, S
+        else:
+            edge_val_embed = self.edge_val_embed(input['distance'][:, :, :, None])
+            if self.embed_adj_mat:
+                adj_mat = knn_adjacency_torch(input['distance'], self.kNN)
+                edge_adj_embed = self.edge_adj_embed(adj_mat)
+                e = torch.cat([edge_val_embed, edge_adj_embed], dim=-1)
+            else:
+                e = edge_val_embed
+            return x, e, S
 
 
     def _init_embed(self, input):        
