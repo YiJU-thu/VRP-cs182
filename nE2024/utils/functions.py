@@ -10,6 +10,24 @@ from multiprocessing import Pool
 import torch.nn.functional as F
 
 from loguru import logger
+import pynvml
+
+
+def gpu_memory_usage():
+    """Get the current GPU memory usage."""
+    pynvml.nvmlInit()
+    device_count = pynvml.nvmlDeviceGetCount()
+    memory_info = []
+    for i in range(device_count):
+        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+        memory_info.append(pynvml.nvmlDeviceGetMemoryInfo(handle))
+    pynvml.nvmlShutdown()
+    gBytes = 1024**3
+    for i, info in enumerate(memory_info):
+        logger.debug(f"GPU Memory {i}: Total: {info.total/gBytes:.2f} | Free: {info.free/gBytes:.2f} | Used: {info.used/gBytes:.2f} Gb")
+    
+
+
 
 def load_problem(name):
     from problems import TSP, CVRP, SDVRP, OP, PCTSPDet, PCTSPStoch

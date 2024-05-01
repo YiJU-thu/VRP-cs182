@@ -7,6 +7,7 @@ import pprint as pp
 import torch
 import torch.optim as optim
 from tensorboard_logger import Logger as TbLogger
+# from torchsummary import summary
 
 # from nets.critic_network import CriticNetwork
 from options import get_options
@@ -95,6 +96,11 @@ def run(opts):
     # Overwrite model parameters by parameters to load
     model_ = get_inner_model(model)
     model_.load_state_dict({**model_.state_dict(), **load_data.get('model', {})})
+
+    # print model summary
+    logger.info(model)
+    logger.info(f"TOTAL PARAMS: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+
 
     # Initialize baseline
     if opts.baseline == 'exponential':

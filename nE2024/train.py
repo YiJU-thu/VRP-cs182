@@ -9,7 +9,7 @@ from torch.nn import DataParallel
 
 from nets.decoder_gat import set_decode_type
 from utils.log_utils import log_values
-from utils import move_to
+from utils import move_to, gpu_memory_usage
 
 import time
 from loguru import logger
@@ -96,6 +96,9 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     n_batches = opts.epoch_size // opts.batch_size
     for batch_id in range(n_batches):
         
+        logger.debug(f"batch_id: {batch_id} - START")
+        gpu_memory_usage()
+
         if opts.shpp and opts.shpp_skip != 0:
             opts.force_steps_batch = opts.force_steps * (batch_id%opts.shpp_skip != 1)   # do not force steps for every opts.shpp_skip batches
             # so the initial place holder gets a chance to be trained to find good second step (only apply for shpp mode)
@@ -110,6 +113,9 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
         for batch in tqdm(DataLoader(batch_dataset, batch_size=len(batch_dataset)), disable=opts.no_progress_bar):
             break # only need the first batch
         model.update_time_count(data_gen=time.perf_counter()-t0)    # record data generation time
+
+        logger.debug(f"batch_id: {batch_id} - DATA LOADED")
+        gpu_memory_usage()
 
     # for batch_id, batch in enumerate(tqdm(training_dataloader, disable=opts.no_progress_bar)):
         if not opts.rescale_dist:
@@ -209,8 +215,14 @@ def train_batch(
     x = move_to(x, opts.device)
     bl_val = move_to(bl_val, opts.device) if bl_val is not None else None
 
+    logger.debug(f"batch_id: {batch_id} - DATA MOVED TO DEVICE")
+    gpu_memory_usage()
+
     # Evaluate model, get costs and log probabilities
     cost, log_likelihood = model(x, force_steps=opts.force_steps_batch)
+
+    logger.debug(f"batch_id: {batch_id} - MODEL EVALUATED")
+    gpu_memory_usage()
 
     t0 = time.perf_counter()
     # Evaluate baseline, get baseline loss if any (only for critic)
@@ -229,7 +241,9 @@ def train_batch(
     grad_norms = clip_grad_norms(optimizer.param_groups, opts.max_grad_norm)
     optimizer.step()
     model.update_time_count(model_update=time.perf_counter()-t0)    # record model update time
-
+    
+    logger.debug(f"batch_id: {batch_id} - BACKWARD PASS")
+    gpu_memory_usage()
 
     # Logging
     if step % int(opts.log_step) == 0:
