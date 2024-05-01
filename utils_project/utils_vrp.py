@@ -263,8 +263,12 @@ def force_triangle_ineq(X: torch.Tensor, iter=4, verbose=False) -> torch.Tensor:
         A batch of distance matrices (batch_size, n,n) that satisfy the triangle
         inequality.
     """
-    X0 = X.clone()
+
     I, N, _ = X.shape # I: batch size, N: graph size
+    max_per_batch = 10000000 // N ** 2
+    if I > max_per_batch:
+        return torch.cat([force_triangle_ineq(X[i:i+max_per_batch], iter=iter, verbose=verbose) for i in range(0, I, max_per_batch)], dim=0)
+
     s = 0
     iter = float('inf') if iter is None else iter
     while s < iter:
@@ -280,7 +284,7 @@ def force_triangle_ineq(X: torch.Tensor, iter=4, verbose=False) -> torch.Tensor:
     return Z
 
 
-def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=None, force_triangle_iter=0, is_cvrp=False):
+def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=None, force_triangle_iter=0, is_cvrp=False, keep_rel=True):
     """
     Creates a batch of num_graphs random graph with N vertices.
     In is always in a "standard" distribution, but we also generate "scale_factors" to transform it to a more realistic/diverse instance
@@ -381,6 +385,9 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
             data["distance"] = force_triangle_ineq(data["distance"], iter=force_triangle_iter)
             data = normalize_graph(data, rescale=rescale)
     
+    if not keep_rel and "rel_distance" in data:
+        del data["rel_distance"]
+
     if is_cvrp:
         # From VRP with RL paper https://arxiv.org/abs/1802.04240
         CAPACITIES = {
@@ -574,6 +581,33 @@ def normalize_graph_np(*args, **kwargs):
 
 def recover_graph_np(data):
     return to_np(recover_graph(to_torch(data)))
+
+
+def knn_adjacency_torch(distances, k):
+    """
+    args:
+        distances: torch.Tensor, shape [batch_size, N, N]
+        k: int, number of nearest neighbors to consider
+
+    return:
+        adj_mat: torch.Tensor, shape [batch_size, N, N]
+    """
+
+    # Sort the distances along the last dimension
+    _, indices = torch.topk(distances, k=k, dim=-1, largest=False)
+    print(indices.shape)
+    # Create a mask for the k-nearest neighbors
+    mask = torch.zeros_like(distances)
+    indices_expanded = indices#.unsqueeze(-1).expand(-1, -1, -1, distances.size(-1))
+    print(indices_expanded.shape)
+    mask.scatter_(-1, indices_expanded, 1)
+    
+    # Convert the mask to Boolean adjacency matrices
+    adj_mat = mask.bool()
+    return adj_mat
+
+
+
 
 
 @deprecated
