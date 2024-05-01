@@ -52,6 +52,27 @@ def randomized_svd_batch(A_batch, k, p=5, num_iterations=2):
     return U_batch[:, :, :k], S_batch[:, :k], V_batch[:, :, :k]
 
 
+def knn_adjacency_torch(distances, k):
+    """
+    args:
+        distances: torch.Tensor, shape [batch_size, N, N]
+        k: int, number of nearest neighbors to consider
+
+    return:
+        adj_mat: torch.Tensor, shape [batch_size, N, N]
+    """
+
+    # Sort the distances along the last dimension
+    _, indices = torch.topk(distances, k=k, dim=-1, largest=False)
+    # Create a mask for the k-nearest neighbors
+    mask = torch.zeros_like(distances)
+    indices_expanded = indices#.unsqueeze(-1).expand(-1, -1, -1, distances.size(-1))
+    mask.scatter_(-1, indices_expanded, 1)
+    
+    # Convert the mask to Int adjacency matrices
+    adj_mat = mask.int()
+    return adj_mat
+
 
 def compute_in_batches(f, calc_batch_size, *args, n=None):
     """
