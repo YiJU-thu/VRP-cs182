@@ -121,7 +121,7 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
     model.eval()
 
     model.set_decode_type(
-        "greedy" if opts.decode_strategy in ('bs', 'greedy') else "sampling",
+        "greedy" if opts.decode_strategy in ('bs', 'greedy', 'sgbs') else "sampling",
         temp=softmax_temp)
 
     dataloader = DataLoader(dataset, batch_size=opts.eval_batch_size)
@@ -167,14 +167,13 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                 )
             elif opts.decode_strategy == 'sgbs':
                 # raise NotImplementedError("Sgbs not implemented now")                
-                cum_log_p, sqruences, costs, ids, batch_size = model.beam_search(
+                cum_log_p, sequences, costs, ids, batch_size = model.beam_search(
                     batch, beam_size=width,
                     compress_mask=opts.compress_mask,
                     max_calc_batch_size=opts.max_calc_batch_size,
-                    sgbs = True
+                    sgbs = True,
                     gamma = opts.gamma,
                 )
-
         # FIXME: this is a hack to make things work
         # TODO: this should be moved to utils.functions
         if sequences is None:
@@ -186,7 +185,6 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                 ids.cpu().numpy() if ids is not None else None,
                 batch_size
             )
-        
         # sequences = sequences.cpu().numpy()
         # costs = costs.cpu().numpy()
 
