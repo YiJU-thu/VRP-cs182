@@ -96,8 +96,7 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     n_batches = opts.epoch_size // opts.batch_size
     for batch_id in range(n_batches):
         
-        logger.debug(f"batch_id: {batch_id} - START")
-        gpu_memory_usage()
+        gpu_memory_usage(msg=f"batch_id: {batch_id} - START")
 
         if opts.shpp and opts.shpp_skip != 0:
             opts.force_steps_batch = opts.force_steps * (batch_id%opts.shpp_skip != 1)   # do not force steps for every opts.shpp_skip batches
@@ -114,8 +113,7 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
             break # only need the first batch
         model.update_time_count(data_gen=time.perf_counter()-t0)    # record data generation time
 
-        logger.debug(f"batch_id: {batch_id} - DATA LOADED")
-        gpu_memory_usage()
+        gpu_memory_usage(msg=f"batch_id: {batch_id} - DATA LOADED")
 
     # for batch_id, batch in enumerate(tqdm(training_dataloader, disable=opts.no_progress_bar)):
         if not opts.rescale_dist:
@@ -215,14 +213,12 @@ def train_batch(
     x = move_to(x, opts.device)
     bl_val = move_to(bl_val, opts.device) if bl_val is not None else None
 
-    logger.debug(f"batch_id: {batch_id} - DATA MOVED TO DEVICE")
-    gpu_memory_usage()
+    gpu_memory_usage(msg=f"batch_id: {batch_id} - DATA MOVED TO DEVICE")
 
     # Evaluate model, get costs and log probabilities
     cost, log_likelihood = model(x, force_steps=opts.force_steps_batch)
 
-    logger.debug(f"batch_id: {batch_id} - MODEL EVALUATED")
-    gpu_memory_usage()
+    gpu_memory_usage(msg=f"batch_id: {batch_id} - MODEL EVALUATED")
 
     t0 = time.perf_counter()
     # Evaluate baseline, get baseline loss if any (only for critic)
@@ -242,8 +238,7 @@ def train_batch(
     optimizer.step()
     model.update_time_count(model_update=time.perf_counter()-t0)    # record model update time
     
-    logger.debug(f"batch_id: {batch_id} - BACKWARD PASS")
-    gpu_memory_usage()
+    gpu_memory_usage(msg=f"batch_id: {batch_id} - BACKWARD PASS")
 
     # Logging
     if step % int(opts.log_step) == 0:

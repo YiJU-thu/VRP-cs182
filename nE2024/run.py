@@ -90,6 +90,7 @@ def run(opts):
     ).to(opts.device)
 
     if opts.use_cuda and torch.cuda.device_count() > 1:
+        logger.info(f"Using {torch.cuda.device_count()} GPUs!")
         # model = torch.nn.parallel.DistributedDataParallel(model)
         model = torch.nn.DataParallel(model)
 
