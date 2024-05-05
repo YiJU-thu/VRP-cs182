@@ -19,18 +19,29 @@ def get_inner_model(model):
 
 def validate(model, dataset, opts):
     # Validate
-    print('Validating...')
-    cost = rollout(model, dataset, opts, force_steps=0)
+    print('Validating with greedy...')
+    cost = rollout(model, dataset, opts, force_steps=0, decode_type="greedy")
     avg_cost = cost.mean()
     print('Validation overall avg_cost: {} +- {}'.format(
         avg_cost, torch.std(cost) / math.sqrt(len(cost))))
 
-    return avg_cost
+    # beam search
+    width = opts.val_beam_size
+    if width is None:
+        return avg_cost, None
+    print(f'First 100 - greedy: {cost[:100].mean()}')
+    print('Validating with beam search...')
+    cost = rollout(model, dataset, opts, force_steps=0, decode_type="bs")
+    avg_cost = cost.mean()
+    print('Validation [beam search {}] overall avg_cost: {} +- {}'.format(
+        width, avg_cost, torch.std(cost) / math.sqrt(len(cost))))
+    return avg_cost, avg_cost
 
 
-def rollout(model, dataset, opts, force_steps=0):
+def rollout(model, dataset, opts, force_steps=0, decode_type="greedy"):
     # Put in greedy evaluation mode!
-    set_decode_type(model, "greedy")
+    assert decode_type in ["greedy", "bs"]
+    set_decode_type(model, decode_type)
     model.eval()
 
     def eval_model_bat(bat):
@@ -38,8 +49,15 @@ def rollout(model, dataset, opts, force_steps=0):
             cost, _ = model(move_to(bat, opts.device), force_steps=force_steps)
         return cost.data.cpu()
 
+    def eval_model_bat_bs(bat, width):
+        with torch.no_grad():
+            seq, cost = model.beam_search(move_to(bat, opts.device), beam_size=width, compress_mask=False, max_calc_batch_size=opts.eval_batch_size)
+        return torch.tensor(cost).data.cpu()
+
+
     val = []
-    for batch in tqdm(DataLoader(dataset, batch_size=opts.eval_batch_size), disable=opts.no_progress_bar):
+    batch_size = opts.eval_batch_size if decode_type == "greedy" else 100 # to save time, we only evaluate the first 100 samples
+    for batch in tqdm(DataLoader(dataset, batch_size=batch_size), disable=opts.no_progress_bar):
         if not opts.rescale_dist:
             if 'scale_factors' in batch.keys():
                 batch['scale_factors'] = None
@@ -47,7 +65,11 @@ def rollout(model, dataset, opts, force_steps=0):
                 batch['data']['scale_factors'] = None
             else:
                 raise ValueError("No scale_factors in batch")
-        val.append(eval_model_bat(batch))
+        if decode_type == "greedy":
+            val.append(eval_model_bat(batch))
+        elif decode_type == "bs":
+            val.append(eval_model_bat_bs(batch, opts.val_beam_size))
+            break # only evaluate the first batch
 
 
     return torch.cat(val, 0)
@@ -178,7 +200,7 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
         fn_clear = 'epoch-{}.pt'.format(epoch - opts.checkpoint_epochs)
         clear_model_states(opts.save_dir, fn_clear)
         
-    avg_reward = validate(model, val_dataset, opts)
+    avg_reward, avg_reward_bs = validate(model, val_dataset, opts)
     opts.best_val = opts.best_val if opts.best_val is not None else avg_reward+1
     if avg_reward < opts.best_val:
         opts.best_val = avg_reward
@@ -189,7 +211,10 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     if not opts.no_tensorboard:
         tb_logger.log_value('val_avg_reward', avg_reward, step)
     if not opts.no_wandb:
-        wandb_logger.log({'val_avg_reward': avg_reward, 'epoch': epoch})
+        info = {'val_avg_reward': avg_reward, 'epoch': epoch}
+        if avg_reward_bs is not None:
+            info['val_avg_reward_bs'] = avg_reward_bs
+        wandb_logger.log(info)
 
     baseline.epoch_callback(model, epoch)
 
