@@ -16,29 +16,6 @@ mp = torch.multiprocessing.get_context('spawn')
 from options import get_eval_options
 
 
-def get_best(sequences, cost, ids=None, batch_size=None):
-    """
-    Ids contains [0, 0, 0, 1, 1, 2, ..., n, n, n] if 3 solutions found for 0th instance, 2 for 1st, etc
-    :param sequences:
-    :param lengths:
-    :param ids:
-    :return: list with n sequences and list with n lengths of solutions
-    """
-    if ids is None:
-        idx = cost.argmin()
-        return sequences[idx:idx+1, ...], cost[idx:idx+1, ...]
-
-    splits = np.hstack([0, np.where(ids[:-1] != ids[1:])[0] + 1])
-    mincosts = np.minimum.reduceat(cost, splits)
-
-    group_lengths = np.diff(np.hstack([splits, len(ids)]))
-    all_argmin = np.flatnonzero(np.repeat(mincosts, group_lengths) == cost)
-    result = np.full(len(group_lengths) if batch_size is None else batch_size, -1, dtype=int)
-
-    result[ids[all_argmin[::-1]]] = all_argmin[::-1]
-
-    return [sequences[i] if i >= 0 else None for i in result], [cost[i] if i >= 0 else math.inf for i in result]
-
 
 def eval_dataset_mp(args):
     (dataset_path, width, softmax_temp, opts, i, num_processes) = args
@@ -161,26 +138,11 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
             else:
                 assert opts.decode_strategy == 'bs'
 
-                cum_log_p, sequences, costs, ids, batch_size = model.beam_search(
+                sequences, costs = model.beam_search(
                     batch, beam_size=width,
                     compress_mask=opts.compress_mask,
                     max_calc_batch_size=opts.max_calc_batch_size
                 )
-
-        # FIXME: this is a hack to make things work
-        # TODO: this should be moved to utils.functions
-        if sequences is None:
-            sequences = [None] * batch_size
-            costs = [math.inf] * batch_size
-        else:
-            sequences, costs = get_best(
-                sequences.cpu().numpy(), costs.cpu().numpy(),
-                ids.cpu().numpy() if ids is not None else None,
-                batch_size
-            )
-        
-        # sequences = sequences.cpu().numpy()
-        # costs = costs.cpu().numpy()
 
         duration = time.time() - start
         for seq, cost in zip(sequences, costs):

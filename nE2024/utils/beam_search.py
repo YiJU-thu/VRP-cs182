@@ -2,6 +2,7 @@ import time
 import torch
 from typing import NamedTuple
 from utils.lexsort import torch_lexsort
+from utils.functions import get_best
 
 
 def beam_search(*args, **kwargs):
@@ -9,7 +10,7 @@ def beam_search(*args, **kwargs):
     return get_beam_search_results(beams, final_state)
 
 
-def get_beam_search_results(beams, final_state):
+def get_beam_search_results(beams, final_state, return_best=True):
     beam = beams[-1]  # Final beam
     if final_state is None:
         return None, None, None, None, beam.batch_size
@@ -19,7 +20,12 @@ def get_beam_search_results(beams, final_state):
     parents = [beam.parent for beam in beams[1:]]
 
     solutions = final_state.construct_solutions(backtrack(parents, actions))
-    return beam.score, solutions, final_state.get_final_cost()[:, 0], final_state.ids.view(-1), beam.batch_size
+    cum_log_p, sequences, costs, ids, batch_size =\
+        beam.score, solutions, final_state.get_final_cost()[:, 0], final_state.ids.view(-1), beam.batch_size
+    if not return_best:
+        return cum_log_p, sequences, costs, ids, batch_size
+    return get_best(sequences.cpu().numpy(), costs.cpu().numpy(),
+                ids.cpu().numpy(), batch_size)
 
 
 def _beam_search(state, beam_size, propose_expansions=None,

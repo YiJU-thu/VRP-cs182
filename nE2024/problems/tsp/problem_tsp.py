@@ -21,7 +21,7 @@ class TSP(object):
     def get_costs(dataset, pi):
         # Check that tours are valid, i.e. contain 0 to n -1
         assert (
-            torch.arange(pi.size(1), out=pi.data.new()).view(1, -1).expand_as(pi) ==
+            torch.arange(pi.size(1), out=pi.data.new(), device=pi.device).view(1, -1).expand_as(pi) ==
             pi.data.sort(1)[0]
         ).all(), "Invalid tour"
 
