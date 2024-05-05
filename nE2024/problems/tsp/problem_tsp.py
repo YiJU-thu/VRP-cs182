@@ -112,11 +112,19 @@ class TSPDataset(Dataset):
                 self.data = recover_graph(self.data)
 
         assert self.data["coords"].device == torch.device("cpu"), "Data should be on CPU"
-        # self.size = self.data["coords"].shape[0]
+        # FIXME: a temporary attempt to remove rel_distance
+        keep_rel = False
+        if not keep_rel and "rel_distance" in self.data:
+            del self.data["rel_distance"]
 
     @property
     def size(self):
-        return self.data["coords"].shape[0]
+        if "coords" in self.data:
+            return self.data["coords"].shape[0]
+        elif "distance" in self.data:
+            return self.data["distance"].shape[0]
+        else:
+            raise NotImplementedError("data has no 'coords' or 'distance' key")
 
     def __len__(self):
         return self.size
@@ -124,18 +132,13 @@ class TSPDataset(Dataset):
     def __getitem__(self, idx):
         # note: DataParallel requires everything does not support None type
         scale_factors = torch.tensor([float('nan')]) if not self.rescale else self.data['scale_factors'][idx]
-        if not self.non_Euc:
-            return {
-                "coords": self.data['coords'][idx],
-                "scale_factors": scale_factors,
-            }
-        else:
-            return {
-                "coords": self.data['coords'][idx],
-                "distance": self.data['distance'][idx],
-                "rel_distance": self.data['rel_distance'][idx],
-                "scale_factors": scale_factors,
-            }
+        data = {}
+        for k, v in self.data.items():
+            if k in ["coords", "distance", "rel_distance"]:
+                data[k] = v[idx]
+            elif k == "scale_factors":
+                data[k] = scale_factors
+        return data
     
     def pomo_augment(self, N1, N2):
         dataset = self.data
@@ -181,7 +184,8 @@ class TSPDataset(Dataset):
         dataset['coords'] = sample_coords_start(dataset['coords'], N1)
         if self.non_Euc:
             dataset['distance'] = sample_dist_mat_start(dataset['distance'], N1)
-            dataset['rel_distance'] = sample_dist_mat_start(dataset['rel_distance'], N1)
+            if "rel_distance" in dataset:
+                dataset['rel_distance'] = sample_dist_mat_start(dataset['rel_distance'], N1)
         if dataset["scale_factors"] is not None:
             dataset["scale_factors"] = repeat_scale_factors(dataset["scale_factors"], N1)
         
@@ -217,7 +221,8 @@ class TSPDataset(Dataset):
         dataset['coords'] = sample_coords_rot(dataset['coords'], N2)
         if self.non_Euc:
             dataset['distance'] = sample_dist_mat_rot(dataset['distance'], N2)
-            dataset['rel_distance'] = sample_dist_mat_rot(dataset['rel_distance'], N2)
+            if "rel_distance" in dataset:
+                dataset['rel_distance'] = sample_dist_mat_rot(dataset['rel_distance'], N2)
         if dataset["scale_factors"] is not None:
             dataset["scale_factors"] = repeat_scale_factors(dataset["scale_factors"], N2)
 

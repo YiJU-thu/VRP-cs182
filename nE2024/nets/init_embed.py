@@ -107,9 +107,10 @@ class InitEncoder(nn.Module):
             assert self.only_distance == False, "only_distance is not supported for Euclidean input"
             scale_factors_dim = 1
         else: # non-Euclidean
-            assert "rel_distance" in input, "Input must contain 'rel_distance' key"
+            assert "distance" in input, "Input must contain 'distance' key"
+            # assert "rel_distance" in input, "Input must contain 'rel_distance' key"
             assert input["distance"].shape == (I, N, N), "distance must be of shape (I, N, N)"
-            assert input["rel_distance"].shape == (I, N, N), "rel_distance must be of shape (I, N, N)"
+            # assert input["rel_distance"].shape == (I, N, N), "rel_distance must be of shape (I, N, N)"
             scale_factors_dim = 3
 
         # ================================================

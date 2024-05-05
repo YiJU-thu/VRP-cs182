@@ -13,16 +13,19 @@ from loguru import logger
 import pynvml
 
 
-def gpu_memory_usage():
+def gpu_memory_usage(msg=""):
     """Get the current GPU memory usage."""
+    if not torch.cuda.is_available():
+        return  # No GPU
     pynvml.nvmlInit()
-    device_count = pynvml.nvmlDeviceGetCount()
+    device_count = torch.cuda.device_count()
     memory_info = []
     for i in range(device_count):
         handle = pynvml.nvmlDeviceGetHandleByIndex(i)
         memory_info.append(pynvml.nvmlDeviceGetMemoryInfo(handle))
     pynvml.nvmlShutdown()
     gBytes = 1024**3
+    logger.debug(f"{msg} || Number of GPUs: {device_count}")
     for i, info in enumerate(memory_info):
         logger.debug(f"GPU Memory {i}: Total: {info.total/gBytes:.2f} | Free: {info.free/gBytes:.2f} | Used: {info.used/gBytes:.2f} Gb")
     
