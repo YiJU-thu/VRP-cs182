@@ -102,6 +102,14 @@ def run(opts):
     logger.info(model)
     logger.info(f"TOTAL PARAMS: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
+    # save model summary to txt file
+    with open(os.path.join(opts.save_dir, "model_summary.txt"), "w") as f:
+        f.write(str(model))
+        f.write(f"\n\nPARAMS: {[p.numel() for p in model.parameters() if p.requires_grad]}")
+        f.write(f"\n\nTOTAL PARAMS: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+    logger.info(f"Model summary saved")
+
+
 
     # Initialize baseline
     if opts.baseline == 'exponential':
