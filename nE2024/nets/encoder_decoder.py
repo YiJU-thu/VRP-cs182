@@ -166,5 +166,8 @@ class VRPModel(nn.Module):
     def time_stats(self):
         total_time = sum(self.time_count.values())
         if total_time == 0:
-            return {f'T-{key}': 0 for key in self.time_count}
-        return {f'T-{key}': self.time_count[key] / total_time for key in self.time_count}
+            info = {f'T-{key}': 0 for key in self.time_count}
+        else:
+            info = {f'T-{key}': self.time_count[key] / total_time for key in self.time_count}
+        info["total_time"] = total_time / 3600 # in hours
+        return info
