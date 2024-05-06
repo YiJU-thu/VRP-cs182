@@ -11,6 +11,7 @@ from utils.functions import sample_many
 
 from loguru import logger
 
+# FIXME: can be moved elewhere?
 def set_decode_type(model, decode_type):
     if isinstance(model, DataParallel):
         model = model.module

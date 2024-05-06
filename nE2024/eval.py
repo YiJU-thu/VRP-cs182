@@ -133,8 +133,6 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                 assert batch_rep > 0
                 # This returns (batch_size, iter_rep shape)
                 sequences, costs = model.sample_many(batch, batch_rep=batch_rep, iter_rep=iter_rep)
-                batch_size = len(costs)
-                ids = torch.arange(batch_size, dtype=torch.int64, device=costs.device)
             else:
                 assert opts.decode_strategy == 'bs'
 

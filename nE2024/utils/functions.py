@@ -229,7 +229,8 @@ def sample_many(decoder, input, embed, batch_rep=1, iter_rep=1, return_best=True
 
     if not return_best:
         return minpis, mincosts
-    return get_best(minpis.cpu().numpy(), mincosts.cpu().numpy(), batch_size=len(mincosts))
+    batch_size = minpis.size(0)
+    return get_best(minpis.cpu().numpy(), mincosts.cpu().numpy(), ids=np.arange(batch_size), batch_size=batch_size)
 
 
 def get_best(sequences, cost, ids=None, batch_size=None):
