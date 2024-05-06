@@ -27,7 +27,7 @@ def validate(model, dataset, opts):
 
     # beam search
     width = opts.val_beam_size
-    if width is None:
+    if width is None or width <= 1:
         return avg_cost, None
     print(f'First 100 - greedy: {cost[:100].mean()}')
     print('Validating with beam search...')
