@@ -19,7 +19,7 @@ from utils_vrp import get_random_graph_np
 
 
 
-def save_random_dataset(num_graphs, graph_size, non_Euc, rescale, force_triangle_iter, seed, problem="tsp", save=True, save_path=None):
+def save_random_dataset(num_graphs, graph_size, non_Euc, rescale, force_triangle_iter, keep_rel, seed, problem="tsp", save=True, save_path=None, dtype="float32"):
 
     if save_path is not None and os.path.exists(save_path):
         logger.info(f"File {cstring.green(save_path)} already exists!")
@@ -29,8 +29,14 @@ def save_random_dataset(num_graphs, graph_size, non_Euc, rescale, force_triangle
 
     data = get_random_graph_np(n=graph_size, num_graphs=num_graphs, non_Euc=non_Euc, 
                                rescale=rescale, force_triangle_iter=force_triangle_iter, seed=seed,
-                               is_cvrp=(problem=="cvrp"), )
+                               is_cvrp=(problem=="cvrp"), keep_rel=keep_rel)
     # data has keys "coords", "rel_distance", "distance", "scale_factors"
+    assert dtype in ["float16", "float32", "float64"]
+    
+    for key in data:
+        if isinstance(data[key], np.ndarray):
+            data[key] = data[key].astype(dtype)
+    
     if save:
         assert save_path is not None
         with open(save_path, "wb") as f:
@@ -68,6 +74,8 @@ if __name__ == "__main__":
     parser.add_argument("--graph_size", type=int, default=20, help="number of nodes")
     parser.add_argument("--rescale", action="store_true", help="whether to include scale factors")
     parser.add_argument("--force_triangle_iter", type=int, default=0, help="force triangle inequality for this many iterations")
+    parser.add_argument("--keep_rel", action="store_true", help="whether to keep relative distances")
+    parser.add_argument("--dtype", type=str, default="float32", help="np.dtype of the data")
     parser.add_argument("--save_dir", type=str, default=None, help="save directory")
     parser.add_argument("--mini_copy", action="store_true", help="save a mini copy of the dataset")
     # parser.add_argument("--save_mini_dir", type=str, default=None, help="save directory of mini samples")
@@ -89,8 +97,8 @@ if __name__ == "__main__":
         save_fn = f"CVRP_{save_fn}"
     save_path = os.path.join(args.save_dir, save_fn+("_NoTrack"*in_gitrepo)+".pkl")
     data = save_random_dataset(num_graphs=args.num_graphs, graph_size=args.graph_size, non_Euc=not args.Euc,
-                               rescale=args.rescale, force_triangle_iter=args.force_triangle_iter, 
-                               seed=args.seed, save=True, save_path=save_path, problem=args.problem)
+                               rescale=args.rescale, force_triangle_iter=args.force_triangle_iter, keep_rel=args.keep_rel,
+                               seed=args.seed, save=True, save_path=save_path, problem=args.problem, dtype=args.dtype)
     
     if args.mini_copy:
         mini_size=100
