@@ -405,9 +405,12 @@ class GraphAttentionEncoder(nn.Module):
         
         if not return_u_mat:
             if add_graph_dim > 0:
-                self.graph_embed = MLP(embed_dim+add_graph_dim, [embed_dim for _ in range(aug_graph_embed_layers)])
+                dim = embed_dim+add_graph_dim
+                self.graph_embed = MLP(dim, [2*dim for _ in range(aug_graph_embed_layers)])
         else:
-            self.u_mat_embed = MLP(n_heads+add_graph_dim, [embed_dim for _ in range(umat_embed_layers)]+[1])
+            dim = n_heads+add_graph_dim
+            self.u_mat_embed = MLP(dim, [2*dim for _ in range(umat_embed_layers)]+[1])
+            # self.u_mat_embed = MLP(n_heads+add_graph_dim, [embed_dim for _ in range(umat_embed_layers)]+[1])  # this will increase huge memory usage!
 
     def forward(self, x, S, scale_factors=None, mask=None, edge_matrix=None):
 

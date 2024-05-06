@@ -16,13 +16,14 @@ import pynvml
 
 def gpu_memory_usage(msg=""):
     """Get the current GPU memory usage."""
+    return
     if not torch.cuda.is_available():
         return  # No GPU
     pynvml.nvmlInit()
     device_count = torch.cuda.device_count()
     memory_info = []
     for i in range(device_count):
-        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+        handle = pynvml.nvmlDeviceGetHandleByIndex(2)
         memory_info.append(pynvml.nvmlDeviceGetMemoryInfo(handle))
     pynvml.nvmlShutdown()
     gBytes = 1024**3
