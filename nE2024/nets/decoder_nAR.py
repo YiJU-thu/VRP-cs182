@@ -93,10 +93,12 @@ class NonAutoRegDecoder(nn.Module):
 
 
     def beam_search(self, *args, **kwargs):
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         return self.problem.beam_search(*args, **kwargs, model=self)
     
 
     def propose_expansions(self, beam, fixed, expand_size=None, normalize=False, max_calc_batch_size=4096):
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         # First dim = batch_size * cur_beam_size
         log_p_topk, ind_topk = compute_in_batches(
             lambda b: self._get_log_p_topk(fixed[b.ids], b.state, k=expand_size, normalize=normalize),
@@ -169,7 +171,8 @@ class NonAutoRegDecoder(nn.Module):
                     # Filter states
                     state = state[unfinished]
 
-            log_p, mask = self._get_log_p(heatmap, state)
+            # FIXME: glimpse is always None here, but to unify the API when calling _get_log_p, we need to pass it
+            log_p, mask, glimpse = self._get_log_p(heatmap, state)
             
             if i >= force_steps:
                 # Select the indices of the next nodes in the sequences, result (batch_size) long
@@ -200,6 +203,7 @@ class NonAutoRegDecoder(nn.Module):
         return torch.stack(outputs, 1), torch.stack(sequences, 1)
 
     def sample_many(self, input, batch_rep=1, iter_rep=1):
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         """
         :param input: (batch_size, graph_size, node_dim) input node features
         :return:
@@ -235,7 +239,12 @@ class NonAutoRegDecoder(nn.Module):
             assert False, "Unknown decode type"
         return selected
 
+    def _precompute(self, heatmap):
+        return heatmap
+
+
     def _get_log_p_topk(self, fixed, state, k=None, normalize=True):
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         log_p, mask, glimpse = self._get_log_p(fixed, state, normalize=normalize)
 
         # Return topk
@@ -273,4 +282,4 @@ class NonAutoRegDecoder(nn.Module):
 
         assert not torch.isnan(log_p).any()
 
-        return log_p, mask
+        return log_p, mask, None
