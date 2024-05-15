@@ -19,17 +19,17 @@ def gpu_memory_usage(msg=""):
     return
     if not torch.cuda.is_available():
         return  # No GPU
-    pynvml.nvmlInit()
     device_count = torch.cuda.device_count()
     memory_info = []
     for i in range(device_count):
-        handle = pynvml.nvmlDeviceGetHandleByIndex(2)
-        memory_info.append(pynvml.nvmlDeviceGetMemoryInfo(handle))
-    pynvml.nvmlShutdown()
+        free_memory, total_memory = torch.cuda.mem_get_info(i)
+        memory_info.append([free_memory, total_memory])
     gBytes = 1024**3
     logger.debug(f"{msg} || Number of GPUs: {device_count}")
     for i, info in enumerate(memory_info):
-        logger.debug(f"GPU Memory {i}: Total: {info.total/gBytes:.2f} | Free: {info.free/gBytes:.2f} | Used: {info.used/gBytes:.2f} Gb")
+        free, tot = info
+        used = tot - free
+        logger.debug(f"GPU Memory {i}: Total: {tot/gBytes:.2f} | Free: {free/gBytes:.2f} | Used: {used/gBytes:.2f} Gb")
     
 
 
