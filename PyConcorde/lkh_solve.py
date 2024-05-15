@@ -7,7 +7,9 @@ from loguru import logger
 
 # @logger.catch
 def solve_lkh(directory, name, dist_mat, demand=None, depot=None, capacity=None, scale=10000, runs=1, problem='tsp'):
-    executable = '/home/yiju/install/LKH-3.0.6/LKH'
+    # get executable from environment (export LKH_EXECUTABLE="/path/to/lkh_executable")
+    executable = os.getenv('LKH_EXECUTABLE')
+    # executable = '/home/yiju/install/LKH-3.0.6/LKH'
     problem_filename = os.path.join(directory, "{}.lkh{}.vrp".format(name, runs))
     tour_filename = os.path.join(directory, "{}.lkh{}.tour".format(name, runs))
     # output_filename = os.path.join(directory, "{}.lkh{}.pkl".format(name, runs))
