@@ -69,7 +69,7 @@ class NonAutoRegDecoder(nn.Module):
         if temp is not None:  # Do not change temperature if not provided
             self.temp = temp
 
-    def forward(self, input, heatmap, force_steps=0, return_pi=False):
+    def forward(self, input, heatmap, force_steps=0, return_pi=False, ref_pi=None):
         """
         :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
         :param return_pi: whether to return the output sequences, this is optional as it is not compatible with
@@ -77,7 +77,7 @@ class NonAutoRegDecoder(nn.Module):
         :return:
         """
 
-        _log_p, pi = self._inner(input, heatmap, force_steps=force_steps)
+        _log_p, pi = self._inner(input, heatmap, force_steps=force_steps, ref_pi=ref_pi)
 
         for i in range(force_steps):
             assert pi[:, i].eq(i).all(), "Forced output incorrect"
@@ -146,7 +146,7 @@ class NonAutoRegDecoder(nn.Module):
         return log_p.sum(1)
 
  
-    def _inner(self, input, heatmap, force_steps=0):
+    def _inner(self, input, heatmap, force_steps=0, ref_pi=None):
 
         outputs = []
         sequences = []
@@ -157,6 +157,8 @@ class NonAutoRegDecoder(nn.Module):
 
         # Perform decoding steps
         i = 0
+        if ref_pi is not None:
+            ref_pi.shape == heatmap.shape[0], heatmap.shape[1]    # FIXME: we may pass a partial tour as ref_pi later
 
         while not (self.shrink_size is None and state.all_finished()):
 
@@ -174,7 +176,10 @@ class NonAutoRegDecoder(nn.Module):
             # FIXME: glimpse is always None here, but to unify the API when calling _get_log_p, we need to pass it
             log_p, mask, glimpse = self._get_log_p(heatmap, state)
             
-            if i >= force_steps:
+            if ref_pi is not None:
+                selected = ref_pi[:, i]
+
+            elif i >= force_steps:
                 # Select the indices of the next nodes in the sequences, result (batch_size) long
                 selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
             else:

@@ -32,10 +32,10 @@ def validate(model, dataset, opts):
     print(f'First 100 - greedy: {cost[:100].mean()}')
     print('Validating with beam search...')
     cost = rollout(model, dataset, opts, force_steps=0, decode_type="bs")
-    avg_cost = cost.mean()
+    avg_cost_bs = cost.mean()
     print('Validation [beam search {}] overall avg_cost: {} +- {}'.format(
-        width, avg_cost, torch.std(cost) / math.sqrt(len(cost))))
-    return avg_cost, avg_cost
+        width, avg_cost_bs, torch.std(cost) / math.sqrt(len(cost))))
+    return avg_cost, avg_cost_bs
 
 
 def rollout(model, dataset, opts, force_steps=0, decode_type="greedy"):
@@ -95,7 +95,7 @@ def clip_grad_norms(param_groups, max_norm=math.inf):
     return grad_norms, grad_norms_clipped
 
 
-def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, problem, tb_logger, wandb_logger, opts):
+def train_epoch(model, dataloader, optimizer, baseline, lr_scheduler, epoch, val_dataset, problem, tb_logger, wandb_logger, opts):
     print("Start train epoch {}, lr={} for run {}".format(epoch, optimizer.param_groups[0]['lr'], opts.run_name))
     step = epoch * (opts.epoch_size // opts.batch_size)
     start_time = time.time()
@@ -126,13 +126,19 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
             # choose ==1 so that logged batch val is based on SHPP (while epoch metric is TSP)
 
         t0 = time.perf_counter()
+        
         with torch.device("cpu"): # make sure the dataset is on CPU
-            batch_dataset = baseline.wrap_dataset(problem.make_dataset(
-                size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, 
-                rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution))
-            
-        for batch in tqdm(DataLoader(batch_dataset, batch_size=len(batch_dataset)), disable=opts.no_progress_bar):
-            break # only need the first batch
+            if dataloader is not None:
+                batch, sol = next(dataloader)
+            else:
+                batch_dataset = baseline.wrap_dataset(problem.make_dataset(
+                    size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, 
+                    rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution))
+                    
+                for batch in tqdm(DataLoader(batch_dataset, batch_size=len(batch_dataset)), disable=opts.no_progress_bar):
+                    break # only need the first batch
+                sol = None
+
         model.update_time_count(data_gen=time.perf_counter()-t0)    # record data generation time
 
         gpu_memory_usage(msg=f"batch_id: {batch_id} - DATA LOADED")
@@ -155,6 +161,7 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
             batch_id,
             step,
             batch,
+            sol,
             tb_logger,
             wandb_logger,
             opts
@@ -230,29 +237,45 @@ def train_batch(
         batch_id,
         step,
         batch,
+        sol,
         tb_logger,
         wandb_logger,
         opts
 ):
-    x, bl_val = baseline.unwrap_batch(batch)
-    x = move_to(x, opts.device)
-    bl_val = move_to(bl_val, opts.device) if bl_val is not None else None
+    
+    if opts.learning_scheme == 'RL':
+        x, bl_val = baseline.unwrap_batch(batch)
+        x = move_to(x, opts.device)
+        bl_val = move_to(bl_val, opts.device) if bl_val is not None else None
 
-    gpu_memory_usage(msg=f"batch_id: {batch_id} - DATA MOVED TO DEVICE")
+        gpu_memory_usage(msg=f"batch_id: {batch_id} - DATA MOVED TO DEVICE")
 
-    # Evaluate model, get costs and log probabilities
-    cost, log_likelihood = model(x, force_steps=opts.force_steps_batch)
+        # Evaluate model, get costs and log probabilities
+        cost, log_likelihood = model(x, force_steps=opts.force_steps_batch)
 
-    gpu_memory_usage(msg=f"batch_id: {batch_id} - MODEL EVALUATED")
+        gpu_memory_usage(msg=f"batch_id: {batch_id} - MODEL EVALUATED")
 
-    t0 = time.perf_counter()
-    # Evaluate baseline, get baseline loss if any (only for critic)
-    bl_val, bl_loss = baseline.eval(x, cost) if bl_val is None else (bl_val, 0)
-    model.update_time_count(baseline_eval=time.perf_counter()-t0)    # record baseline evaluation time
+        t0 = time.perf_counter()
+        # Evaluate baseline, get baseline loss if any (only for critic)
+        bl_val, bl_loss = baseline.eval(x, cost) if bl_val is None else (bl_val, 0)
+        model.update_time_count(baseline_eval=time.perf_counter()-t0)    # record baseline evaluation time
 
-    # Calculate loss
-    reinforce_loss = ((cost - bl_val) * log_likelihood).mean()
-    loss = reinforce_loss + bl_loss
+        # Calculate loss
+        reinforce_loss = ((cost - bl_val) * log_likelihood).mean()
+        loss = reinforce_loss + bl_loss
+    
+    elif opts.learning_scheme == 'SL':
+        x, ref_pi = batch, sol
+        x, ref_pi = move_to(x, opts.device), move_to(ref_pi, opts.device)
+        ref_pi = ref_pi.long()  # convert to int64
+        cost, log_likelihood = model(x, ref_pi=ref_pi)
+        loss = -log_likelihood.mean()  # maximize the likelihood of the reference sequence (optimal tours)
+        cost, reinforce_loss, bl_loss = None, None, None    # no meaning for SL
+
+    elif opts.learning_scheme == 'USL':
+        raise NotImplementedError("Unsupervised Learning is not implemented yet")
+    else:
+        raise ValueError("Unknown learning scheme, please choose from ['RL', 'SL', 'USL']")
 
     t0 = time.perf_counter()
     # Perform backward pass and optimization step

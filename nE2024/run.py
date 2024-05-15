@@ -19,6 +19,7 @@ from reinforce_baselines import NoBaseline, ExponentialBaseline, CriticBaseline,
 from nets.encoder_decoder import VRPModel
 
 from utils import torch_load_cpu, load_problem
+from utils.vrp_dataset import VRPDataset, VRPLargeDataset
 
 from loguru import logger
 
@@ -198,9 +199,17 @@ def run(opts):
     if opts.eval_only:
         validate(model, val_dataset, opts)
     else:
+        if opts.learning_scheme == "SL":
+            with torch.device("cpu"):
+                dataloader = VRPLargeDataset(filenames=opts.sl_filenames, batch_size=opts.batch_size, n_loaded_files=opts.n_loaded_files, start_file_idx=opts.start_file_idx, 
+                                            shuffle=True, augmentation=opts.augmentation, n_aug=opts.n_aug)
+            dataloader = iter(dataloader)
+        else:
+            dataloader = None
         for epoch in range(opts.epoch_start, opts.epoch_start + opts.n_epochs):
             train_epoch(
                 model,
+                dataloader,
                 optimizer,
                 baseline,
                 lr_scheduler,
