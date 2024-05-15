@@ -213,7 +213,7 @@ def get_options(args=None):
         else:
             dir = os.path.join(curr_dir, '../dataset/nE2024_data/SL_100')
             instance_per_file = 10000
-            fns = [f"rnd_N100_I10000_S_seed{i:03d}_iter4_NoTrack.pkl" for i in range(100)]
+            fns = [f"rnd_N100_I10000_S_seed{i+100:03d}_iter4_NoTrack.pkl" for i in range(100)]
             filenames = {
                 os.path.join(dir, f"SL_{i//10:03d}", fns[i]): os.path.join(dir, f"SL_{i//10:03d}", "LKH_"+fns[i]) for i in range(100)
             }
