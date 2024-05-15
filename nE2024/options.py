@@ -83,6 +83,15 @@ def get_options(args=None):
 
 
     # [Training]
+    parser.add_argument('--learning_scheme', default='RL', help='Learning scheme: valid: RL, SL, USL')
+    # SL only
+    parser.add_argument('--tot_samples', type=int, default=None, help='Total number of samples for training')
+    parser.add_argument('--augmentation', type=str, default='none', help='Data augmentation method. Options: none, flip, rotate, roll, or any combo. linked w/ "_"')
+    parser.add_argument('--n_aug', type=int, default=1, help='Number of augmentations per sample.')
+    parser.add_argument('--n_loaded_files', type=int, default=10, help='Number of files loaded at once')
+    parser.add_argument('--start_file_idx', type=int, default=0, help='Index of the first file to load')
+    parser.add_argument('--sl_debug', action='store_true', help='Debug mode for SL')
+
     parser.add_argument('--optimizer', default='adam', help="Optimizer to use, 'adam' (default) or 'adamW'")
     parser.add_argument('--lr_model', type=float, default=1e-4, help="Set the learning rate for the actor network")
     parser.add_argument('--lr_critic', type=float, default=1e-4, help="Set the learning rate for the critic network")
@@ -131,6 +140,11 @@ def get_options(args=None):
 
 
     opts = parser.parse_args(args)
+    # replace "none", "None", "NONE" with None
+    for k, v in vars(opts).items():
+        if v in ["none", "None", "NONE"]:
+            setattr(opts, k, None)
+
 
     if opts.encoder == 'gat':
         opts.encoder_kwargs = {k: v for k, v in vars(opts).items() if k in gat_encoder_kws}
@@ -184,6 +198,39 @@ def get_options(args=None):
     opts.force_steps_batch = opts.force_steps
     
     
+    if opts.learning_scheme == 'SL':
+        curr_dir = os.path.dirname(os.path.realpath(__file__))
+        assert opts.baseline is None
+        
+        # find the dataset
+        if opts.sl_debug:
+            dir = os.path.join(curr_dir, '../dataset/nE2024_data/test')
+            instance_per_file = 5000
+            fns = [f"rnd_N100_I5000_S_seed{i}_iter4_NoTrack.pkl" for i in range(2)]
+            filenames = {
+                os.path.join(dir, fns[i]): os.path.join(dir, "CCD_"+fns[i]) for i in range(2)
+            }
+        else:
+            dir = os.path.join(curr_dir, '../dataset/nE2024_data/SL_100')
+            instance_per_file = 10000
+            fns = [f"rnd_N100_I10000_S_seed{i:03d}_iter4_NoTrack.pkl" for i in range(100)]
+            filenames = {
+                os.path.join(dir, f"SL_{i//10:03d}", fns[i]): os.path.join(dir, f"SL_{i//10:03d}", "LKH_"+fns[i]) for i in range(100)
+            }
+        fns = list(filenames.keys())
+        
+        if opts.tot_samples is not None:
+            n_files = opts.tot_samples // instance_per_file
+            if n_files > len(fns):
+                raise ValueError("Not enough files for the given tot_samples")
+            else:
+                fns = fns[:n_files]
+                filenames = {k: filenames[k] for k in fns}
+        opts.sl_filenames = filenames
+
+
+
+
     return opts
 
 
