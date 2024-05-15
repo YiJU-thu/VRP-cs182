@@ -52,9 +52,10 @@ class VRPModel(nn.Module):
 
 
     
-    def forward(self, input, **kws):
+    def forward(self, input, ref_pi=None, **kws):
         """
         :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
+        :param ref_pi: ref_pi: reference sequence to calculate the log likelihood
         :return:
         FIXME: in the notes, make it clear what **kw probably are
         """
@@ -64,7 +65,7 @@ class VRPModel(nn.Module):
         embed.update(kws)
 
         t1 = time.perf_counter()
-        res = self._decoder(input, **embed)
+        res = self._decoder(input, ref_pi=ref_pi, **embed)
 
 
         # NOTE: old version, no longer needed
