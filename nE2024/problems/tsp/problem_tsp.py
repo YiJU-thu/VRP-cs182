@@ -68,7 +68,7 @@ class TSP(object):
 class TSPDataset(Dataset):
     
     def __init__(self, filename=None, dataset=None, size=50, num_samples=1000000, offset=0, 
-                 non_Euc=False, rand_dist="standard", rescale=False, distribution=None, force_triangle_iter=2,
+                 non_Euc=False, rand_dist="standard", rescale=False, distribution=None, force_triangle_iter=2, no_coords=False,
                  normalize_loaded=True):
         
         super(TSPDataset, self).__init__()
@@ -107,11 +107,17 @@ class TSPDataset(Dataset):
             if rand_dist == "standard":
                 assert rescale == False
             rescale_tmp = (rand_dist == "complex")
-            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp, force_triangle_iter=force_triangle_iter)
+            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp, 
+                                         force_triangle_iter=force_triangle_iter, no_coords=no_coords, keep_rel=False)
             if (not rescale) and rescale_tmp:
                 self.data = recover_graph(self.data)
 
-        assert self.data["coords"].device == torch.device("cpu"), "Data should be on CPU"
+        # FIXME: this may be wired
+        if no_coords:
+            self.data["distance"] /= 1e5    # entries are originally in [1,1e6], this makes the optimal tour length around 15.7
+
+
+        assert self.data.get("coords", self.data.get("distance")).device == torch.device("cpu"), "Data should be on CPU"
         # FIXME: a temporary attempt to remove rel_distance
         keep_rel = False
         if not keep_rel and "rel_distance" in self.data:
@@ -181,7 +187,8 @@ class TSPDataset(Dataset):
 
 
         # sample N1 starts for each instance
-        dataset['coords'] = sample_coords_start(dataset['coords'], N1)
+        if "coords" in dataset:
+            dataset['coords'] = sample_coords_start(dataset['coords'], N1)
         if self.non_Euc:
             dataset['distance'] = sample_dist_mat_start(dataset['distance'], N1)
             if "rel_distance" in dataset:
@@ -218,7 +225,8 @@ class TSPDataset(Dataset):
             return x_augment
 
         # sample N2 rotations for each instance
-        dataset['coords'] = sample_coords_rot(dataset['coords'], N2)
+        if "coords" in dataset:
+            dataset['coords'] = sample_coords_rot(dataset['coords'], N2)
         if self.non_Euc:
             dataset['distance'] = sample_dist_mat_rot(dataset['distance'], N2)
             if "rel_distance" in dataset:

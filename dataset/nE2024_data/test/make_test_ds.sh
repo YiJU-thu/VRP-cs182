@@ -8,6 +8,11 @@ do
     python make_rnd_dataset.py --graph_size 100 --num_graphs $num_graphs --seed $i --save_dir $save_dir --force_triangle_iter 4
 done
 
+# Simple-dist MatNet style TSP test dataset
+num_graphs=10000
+i=0
+python make_rnd_dataset.py --graph_size 100 --num_graphs $num_graphs --seed $i --save_dir $save_dir --force_triangle_iter 4 --no_coords
+
 # Complex-dist non-Euc TSP test dataset
 num_graphs=5000
 for ((i=0; i<=1; i++))
