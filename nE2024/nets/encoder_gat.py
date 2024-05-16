@@ -32,7 +32,9 @@ class AttentionEncoder(nn.Module):
                  checkpoint_encoder=False,
                  return_heatmap=False,
                  umat_embed_layers=3,
-                 aug_graph_embed_layers=3
+                 aug_graph_embed_layers=3,
+                 no_coords=False,
+                 random_node_dim=0
                  ):
         super(AttentionEncoder, self).__init__()
 
@@ -82,7 +84,9 @@ class AttentionEncoder(nn.Module):
             svd_original_edge=svd_original_edge,
             mul_sigma_uv=mul_sigma_uv,
             full_svd=full_svd,
-            only_distance=only_distance
+            only_distance=only_distance,
+            no_coords=no_coords,
+            random_node_dim=random_node_dim
         )
 
         self.embedder = GraphAttentionEncoder(
@@ -105,7 +109,7 @@ class AttentionEncoder(nn.Module):
         :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
         :return:
         """
-        I, N, _ = input['coords'].shape
+        I, N = self.init_embed._get_input_shape(input)
         scale_factors_dim = 2 * self.non_Euc + 1
         if self.rescale_dist:
             assert input['scale_factors'].shape == (I, scale_factors_dim), "scale_dist must be of shape (I, scale_factors_dim)"

@@ -12,6 +12,7 @@ def get_options(args=None):
     # [Data]
     parser.add_argument('--problem', default='tsp', help="The problem to solve, default 'tsp'")
     parser.add_argument('--non_Euc', action='store_true', help="Whether the problem is non-Euclidean. If the case, both coords and distance matrix will be provided")
+    parser.add_argument('--no_coords', action='store_true', help="Whether to use coordinates in the model")
     parser.add_argument('--graph_size', type=int, default=20, help="The size of the problem graph")
     parser.add_argument('--batch_size', type=int, default=512, help='Number of instances per batch during training')
     parser.add_argument('--batch_per_epoch', type=int, default=2000, help='Number of batches per epoch during training')
@@ -28,7 +29,7 @@ def get_options(args=None):
 
     # GAT encoder kwargs
     gat_init_encoder_kws = ["embedding_dim", "hidden_dim", "problem", "non_Euc", 
-                       "rank_k_approx", "svd_original_edge", "mul_sigma_uv", "full_svd", "only_distance",]
+                       "rank_k_approx", "svd_original_edge", "mul_sigma_uv", "full_svd", "only_distance", "no_coords", "random_node_dim"]
     gat_encoder_kws = gat_init_encoder_kws + ["n_edge_encode_layers", "encode_original_edge", "rescale_dist", "n_encode_layers", 
                        "normalization", "n_heads", "checkpoint_encoder", "return_heatmap", "umat_embed_layers", "aug_graph_embed_layers"]
 
@@ -49,18 +50,20 @@ def get_options(args=None):
     parser.add_argument('--umat_embed_layers', type=int, default=3, help='number of MLP hidden layers for umat embedding')
     parser.add_argument('--aug_graph_embed_layers', type=int, default=3, help='number of MLP hidden layers for augmented graph embedding')
     parser.add_argument('--rescale_dist', action='store_true', help='if rand_dist is not standard, whether to rescale it to standard')
+    parser.add_argument('--random_node_dim', type=int, default=0, help='randomly generate initial node features of this dimension in U(0,1)')
     parser.add_argument('--checkpoint_encoder', action='store_true',
                         help='Set to decrease memory usage by checkpointing encoder')
 
     
     # GCN encoder kwargs
+    gcn_init_encoder_kws = gat_init_encoder_kws + ["edge_embedding_dim", "adj_mat_embedding_dim", "kNN"]
+    gcn_encoder_kws = gcn_init_encoder_kws + ["encode_original_edge", "rescale_dist", "n_encode_layers", "normalization", 
+                                              "checkpoint_encoder", "return_heatmap", "umat_embed_layers", "aug_graph_embed_layers", "gcn_aggregation"]
     parser.add_argument('--edge_embedding_dim', type=int, default=None, help='Dimension of edge embedding')
     parser.add_argument('--adj_mat_embedding_dim', type=int, default=None, help='Dimension of adjacency matrix embedding')
     parser.add_argument('--kNN', type=int, default=20, help='Number of nearest neighbors to consider in the adjacency matrix')
     parser.add_argument('--gcn_aggregation', default='sum', help="Aggregation type, 'mean' or 'sum' (default)")
-    gcn_init_encoder_kws = gat_init_encoder_kws + ["edge_embedding_dim", "adj_mat_embedding_dim", "kNN"]
-    gcn_encoder_kws = gcn_init_encoder_kws + ["encode_original_edge", "rescale_dist", "n_encode_layers", "normalization", 
-                                              "checkpoint_encoder", "return_heatmap", "umat_embed_layers", "aug_graph_embed_layers", "gcn_aggregation"]
+    
     
     # GAT decoder kwargs 
     gat_decoder_kws = ["embedding_dim", "problem", "update_context_node", "tanh_clipping", "mask_inner", "mask_logits", "n_heads", "shrink_size"]

@@ -133,7 +133,8 @@ def train_epoch(model, dataloader, optimizer, baseline, lr_scheduler, epoch, val
             else:
                 batch_dataset = baseline.wrap_dataset(problem.make_dataset(
                     size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, 
-                    rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution))
+                    rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution,
+                    no_coords=opts.no_coords))
                     
                 for batch in tqdm(DataLoader(batch_dataset, batch_size=len(batch_dataset)), disable=opts.no_progress_bar):
                     break # only need the first batch
