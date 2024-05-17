@@ -55,7 +55,7 @@ def clear_checkpoint_optimizer_states(dir="outputs"):
             logger.success(f"!! clear {run}")
 
 
-def copy_trained_nets(from_dir, to_dir, epoch=None, default_epoch="best"):
+def copy_trained_nets(from_dir, to_dir, epoches=None):
     """
     copy the trained nets from from_dir to to_dir
     """
@@ -63,16 +63,26 @@ def copy_trained_nets(from_dir, to_dir, epoch=None, default_epoch="best"):
         from_dir, epoch_fn = os.path.split(from_dir)
         # epoch_fn: (1) "best.pt", (2) epoch-xxx.pt
         epoch = int(epoch_fn.split("-")[1].split(".")[0]) if epoch_fn != "best.pt" else "best"
+        epoches = [epoch]
+        epoch_fns = [epoch_fn]
     else:
         assert os.path.isdir(from_dir), f"{from_dir} is not a directory"
-        if epoch is None:
+        if epoches is None:
             epoch, epoch_fn = find_default_epoch(from_dir, default_epoch)
+            epoches, epoch_fns = [epoch], [epoch_fn]
             if epoch is None:
                 logger.error(f"no epoch in {from_dir}")
                 return
         else:
-            epoch_fn = f"epoch-{epoch}.pt" if epoch != "best" else "best.pt"
-            epoch = int(epoch) if epoch != "best" else "best"
+            epoch_fns = []
+            for e in epoches:
+                if isinstance(e, int):
+                    epoch_fn = f"epoch-{e}.pt"
+                else:
+                    epoch, epoch_fn = find_default_epoch(from_dir, e)
+                epoch_fns.append(epoch_fn)
+            # epoch_fn = f"epoch-{epoch}.pt" if epoch != "best" else "best.pt"
+            # epoch = int(epoch) if epoch != "best" else "best"
     
     if os.path.exists(os.path.join(to_dir, "args.json")) and os.path.exists(os.path.join(to_dir, epoch_fn)):
         logger.info(f"{to_dir} exists")
@@ -88,13 +98,24 @@ def copy_trained_nets(from_dir, to_dir, epoch=None, default_epoch="best"):
     # copy args.json to to_dir
     if not os.path.exists(os.path.join(to_dir, "args.json")):
         shutil.copy(args_fn, to_dir)
+    # TODO: copy 
+    summary_fn = os.path.join(from_dir, "model_summary.txt")
+    if os.path.exists(summary_fn) and (not os.path.exists(os.path.join(to_dir, "model_summary.txt"))):
+        shutil.copy(summary_fn, to_dir)
 
-    epoch_path = os.path.join(from_dir, epoch_fn)
-    assert os.path.exists(epoch_path), f"{epoch_path} does not exist"
-    # copy epoch-xx.pt to to_dir
-    model = torch.load(epoch_path)
-    model_small = {"model": model["model"], "epoch": model.get("epoch", epoch)}
-    torch.save(model_small, os.path.join(to_dir, epoch_fn))
+    for i in range(len(epoches)):
+        epoch = epoches[i]
+        epoch_fn = epoch_fns[i]
+
+        epoch_path = os.path.join(from_dir, epoch_fn)
+        epoch_to_path = os.path.join(to_dir, epoch_fn)
+        if not os.path.exists(epoch_to_path):
+            assert os.path.exists(epoch_path), f"{epoch_path} does not exist"
+            # copy epoch-xx.pt to to_dir
+            model = torch.load(epoch_path)
+            model_small = {"model": model["model"], "epoch": model.get("epoch", epoch)}
+            torch.save(model_small, os.path.join(to_dir, epoch_fn))
+            logger.success(f"copy {epoch_fn} success")
     logger.success(f"copy {from_dir} to {to_dir}")
     
     return

@@ -30,7 +30,15 @@ if __name__ == '__main__':
         # from_name can be either a directory or a file
         # if it is a directory, copy the 'best' (default) / 'last' model
         from_path = os.path.join(from_dir, from_name)
+        if not os.path.isdir(from_path):
+            logger.info(f"{from_name} does not exists! Skipped!")
+            continue
+
+        if isinstance(to_name, list):   # [to_name, epochs to move]
+            to_name, epoches = to_name
+        else:
+            epoches = [args.default_epoch]
         to_path = os.path.join(to_dir, to_name)
-        copy_trained_nets(from_path, to_path, default_epoch=args.default_epoch)
+        copy_trained_nets(from_path, to_path, epoches=epoches)
         # logger.info(f'Copied {from_path} to {to_path}')
     logger.success('Done')

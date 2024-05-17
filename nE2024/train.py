@@ -133,8 +133,7 @@ def train_epoch(model, dataloader, optimizer, baseline, lr_scheduler, epoch, val
             else:
                 batch_dataset = baseline.wrap_dataset(problem.make_dataset(
                     size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, 
-                    rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution,
-                    no_coords=opts.no_coords))
+                    rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution))
                     
                 for batch in tqdm(DataLoader(batch_dataset, batch_size=len(batch_dataset)), disable=opts.no_progress_bar):
                     break # only need the first batch
@@ -243,9 +242,7 @@ def train_batch(
         wandb_logger,
         opts
 ):
-    loss_misc = None
-
-    # FIXME: unify the code to call model.get_loss() for all learning schemes
+    
     if opts.learning_scheme == 'RL':
         x, bl_val = baseline.unwrap_batch(batch)
         x = move_to(x, opts.device)
@@ -266,25 +263,17 @@ def train_batch(
         # Calculate loss
         reinforce_loss = ((cost - bl_val) * log_likelihood).mean()
         loss = reinforce_loss + bl_loss
-        loss_misc = {"actor_loss": reinforce_loss, "critic_loss": bl_loss}
-
+    
     elif opts.learning_scheme == 'SL':
         x, ref_pi = batch, sol
         x, ref_pi = move_to(x, opts.device), move_to(ref_pi, opts.device)
         ref_pi = ref_pi.long()  # convert to int64
         cost, log_likelihood = model(x, ref_pi=ref_pi)
         loss = -log_likelihood.mean()  # maximize the likelihood of the reference sequence (optimal tours)
-        cost, loss_misc = None, None    # no meaning for SL
+        cost, reinforce_loss, bl_loss = None, None, None    # no meaning for SL
 
     elif opts.learning_scheme == 'USL':
-        x = move_to(batch, opts.device)
-        loss, loss_misc = model.get_loss(x, loss_type="ul", loss_params={"c1": opts.ul_loss_c1})
-        logger.debug(f'{loss_misc["tsp_loss"].item()}, {loss_misc["col_sum_one_loss"].item()}')
-
-        if step % int(opts.log_step) == 0:
-            cost, log_likelihood = model(x)
-
-
+        raise NotImplementedError("Unsupervised Learning is not implemented yet")
     else:
         raise ValueError("Unknown learning scheme, please choose from ['RL', 'SL', 'USL']")
 
@@ -303,4 +292,4 @@ def train_batch(
     if step % int(opts.log_step) == 0:
         time_stats = model.time_stats
         log_values(cost, grad_norms, epoch, batch_id, step,
-                   log_likelihood, loss_misc, time_stats, tb_logger, wandb_logger, opts)
+                   log_likelihood, reinforce_loss, bl_loss, time_stats, tb_logger, wandb_logger, opts)
