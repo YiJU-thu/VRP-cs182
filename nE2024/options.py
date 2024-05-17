@@ -30,7 +30,7 @@ def get_options(args=None):
     # GAT encoder kwargs
     gat_init_encoder_kws = ["embedding_dim", "hidden_dim", "problem", "non_Euc", 
                        "rank_k_approx", "svd_original_edge", "mul_sigma_uv", "full_svd", "only_distance", "no_coords", "random_node_dim"]
-    gat_encoder_kws = gat_init_encoder_kws + ["n_edge_encode_layers", "encode_original_edge", "rescale_dist", "n_encode_layers", 
+    gat_encoder_kws = gat_init_encoder_kws + ["n_edge_encode_layers", "encode_original_edge", "matnet_mix_score", "rescale_dist", "n_encode_layers", 
                        "normalization", "n_heads", "checkpoint_encoder", "return_heatmap", "umat_embed_layers", "aug_graph_embed_layers"]
 
     parser.add_argument('--embedding_dim', type=int, default=128, help='Dimension of input embedding')
@@ -42,6 +42,7 @@ def get_options(args=None):
     parser.add_argument('--rank_k_approx', type=int, default=0, help='compute rank k-approx of dist matrix to argument node features')
     parser.add_argument('--n_edge_encode_layers', type=int, default=0, help='add edge matrix encodings to the first n attention layers')
     parser.add_argument('--encode_original_edge', action='store_true', help='if not, encode the relative distance matrix')
+    parser.add_argument('--matnet_mix_score', action='store_true', help='if True, use the mixing mathod as MatNet. Otherwise, use the "our" method')
     parser.add_argument('--svd_original_edge', action='store_true', help='if not, do SVD on the relative distance matrix')
     parser.add_argument('--full_svd', action='store_true', help='if not, use randomized algorithm to perform faster SVD')
     parser.add_argument('--mul_sigma_uv', action='store_true', help='if True, add sqrt(sigma) u, sqrt(sigma) v to the node features')
