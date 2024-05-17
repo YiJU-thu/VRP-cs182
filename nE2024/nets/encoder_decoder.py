@@ -13,6 +13,9 @@ from nets.decoder_nAR import NonAutoRegDecoder
 import time
 from copy import deepcopy
 
+from nets.eas_lay_decoder import run_eas_lay_decoder
+from options import get_options, get_eval_options
+
 class VRPModel(nn.Module):
 
     encoders = {
@@ -124,7 +127,6 @@ class VRPModel(nn.Module):
             score_expand = beam.score[:, None] + log_p_topk[:, 0, :]    # This will broadcast, calculate log_p (score) of expansions
 
         else:
-            ind_topk = ind_topk[]
             rollout_cost_topk = compute_in_batches(
             lambda b: self._get_rollout_cost_topk(fixed[b.ids], b.state,\
                                                   log_p_topk[b.ids],\
@@ -169,11 +171,19 @@ class VRPModel(nn.Module):
         )
 
     def _get_rollout_cost_topk(self, fixed, state, log_p_topk, ind_topk, k, normalize):
-        all_indices = ind_topk[:, 0, :].squeeze()
-        rollout_costs = self.roll_out_simulation(fixed, state, all_indices, normalize)
-        rollout_cost_topk = rollout_costs.unsqueeze(1)
-        print("judge",rollout_cost_topk.shape == log_p_topk.shape)
-        return rollout_costs
+        # Save the original decode_type
+        # original_decode_type = self._decoder.decode_type
+        # self._decoder.decode_type = "greedy"
+
+        rollout_cost_topk = torch.zeros_like(log_p_topk)
+        for i in range(k):
+            rollout_cost = self.roll_out_simulation(fixed, state, ind_topk[:, 0, i].squeeze(), normalize)
+            rollout_cost_topk[:, :, i] = rollout_cost
+
+        # Restore the original decode_type
+        # self._decoder.decode_type = original_decode_type
+
+        return rollout_cost_topk
     
     def roll_out_simulation(self, fixed, state, next_node, normalize):
         _state = deepcopy(state)
@@ -196,3 +206,20 @@ class VRPModel(nn.Module):
         if total_time == 0:
             return {f'T-{key}': 0 for key in self.time_count}
         return {f'T-{key}': self.time_count[key] / total_time for key in self.time_count}
+    
+    def eas_encoder(self, input):
+        raise NotImplementedError("EAS not implemented for encoder")
+
+    def eas_decoder(self, input):
+        # raise NotImplementedError("EAS not implemented for decoder")
+        grouped_actor = self._decoder
+        instance_data_scaled = input
+        problem_size = input["coords"].shape[0]
+
+        # Retrieve the training options
+        config = get_options()
+
+        # Retrieve the evaluation options (if needed)
+        eval_opts = get_eval_options()
+
+        return run_eas_lay_decoder(grouped_actor, instance_data_scaled, problem_size, config, eval_opts)

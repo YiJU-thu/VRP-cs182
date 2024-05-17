@@ -197,7 +197,7 @@ def get_eval_options(args=None):
                         help='Sizes of beam to use for beam search (or number of samples for sampling), '
                              '0 to disable (default), -1 for infinite')
     parser.add_argument('--decode_strategy', default='greedy', type=str,
-                        help='Beam search (bs), Sampling (sample) or Greedy (greedy)')
+                        help='Beam search (bs), simulation guiding beam search (sgbs), Sampling (sample) or Greedy (greedy)')
     parser.add_argument('--softmax_temperature', type=parse_softmax_temperature, default=1,
                         help="Softmax temperature (sampling or bs)")
     parser.add_argument('--model', type=str)
@@ -209,6 +209,8 @@ def get_eval_options(args=None):
     parser.add_argument('--multiprocessing', action='store_true',
                         help='Use multiprocessing to parallelize over multiple GPUs')
     parser.add_argument('--gamma', type=int, default=2, help='Size for expansion factor in SGBS')
+    parser.add_argument('--EAS', type=int, default=0,
+                        help='Insert EAS layer or not, 0 for no EAS, 1 for EAS_encoder, 2 for EAS_decoder')
 
     opts = parser.parse_args(args)
     opts.f = None

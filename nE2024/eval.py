@@ -134,6 +134,19 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
         
         batch = move_to(batch, device)
 
+        if opts.EAS != 0:
+            print('####### Do EAS ######')
+            start = time.time()
+            if opts.EAS == 1:
+                model._encoder = model.eas_encoder(batch)
+            elif opts.EAS == 2:
+                model._decoder = model.eas_decoder(batch)
+            else:
+                raise NotImplementedError("EAS not implemented for EAS = ", opts.EAS)
+            duration = time.time() - start
+            print('EAS duration: ', duration)
+            print('####### EAS Done ######')
+
         start = time.time()
         with torch.no_grad():
             if opts.decode_strategy in ('sample', 'greedy'):
@@ -213,5 +226,3 @@ def eval(opts):
 
 if __name__ == "__main__":
     eval(get_eval_options())
-
-    
