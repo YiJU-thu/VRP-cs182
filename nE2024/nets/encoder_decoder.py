@@ -14,7 +14,7 @@ import time
 from copy import deepcopy
 
 from nets.eas_lay_decoder import run_eas_lay_decoder
-from options import get_options, get_eval_options
+# from options import get_options, get_eval_options
 
 class VRPModel(nn.Module):
 
@@ -96,6 +96,7 @@ class VRPModel(nn.Module):
     
 
     def beam_search(self, input, beam_size, compress_mask, max_calc_batch_size, sgbs=False, gamma = 0):
+        print(input["coords"].shape)
         # NOTE: for different problems, the input may be different (in old versions)
         fixed = self.precompute_fixed(input)
 
@@ -210,16 +211,10 @@ class VRPModel(nn.Module):
     def eas_encoder(self, input):
         raise NotImplementedError("EAS not implemented for encoder")
 
-    def eas_decoder(self, input):
+    def eas_decoder(self, input, problem_name, eval_opts):
         # raise NotImplementedError("EAS not implemented for decoder")
         grouped_actor = self._decoder
         instance_data_scaled = input
-        problem_size = input["coords"].shape[0]
+        problem_size = input["coords"].shape[1]
 
-        # Retrieve the training options
-        config = get_options()
-
-        # Retrieve the evaluation options (if needed)
-        eval_opts = get_eval_options()
-
-        return run_eas_lay_decoder(grouped_actor, instance_data_scaled, problem_size, config, eval_opts)
+        return run_eas_lay_decoder(grouped_actor, instance_data_scaled, problem_size, problem_name, eval_opts)

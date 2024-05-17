@@ -20,11 +20,13 @@ LOGIT_CLIPPING = 10  # (C in the paper)
 
 ACTOR_WEIGHT_DECAY = 1e-6
 
+AUG_S = 8  # Number of augmentations
+
 # EAS-Lay parameters
-param_lr = 0.0032
+param_lr = 0.0032 # EAS Learning rate
 p_runs = 1  # Number of parallel runs per instance, set 1 here
 max_iter = 200 # Maximum number of EAS iterations
-param_lambda = 0.012
+param_lambda = 0.012 # Imitation learning loss weight
 max_runtime = 1000 # Maximum runtime in seconds
 
 use_cuda = torch.cuda.is_available()
@@ -155,24 +157,26 @@ class GROUP_ENVIRONMENT:
         return self.group_state, reward, done
 
     def _get_group_travel_distance(self):
-        gathering_index = self.group_state.selected_node_list.unsqueeze(3).expand(self.batch_s, -1, self.problem_size,
-                                                                                  2)
-        # shape = (batch, group, TSP_SIZE, 2)
-        seq_expanded = self.data[:, None, :, :].expand(self.batch_s, self.group_s, self.problem_size, 2)
+        # gathering_index = self.group_state.selected_node_list.unsqueeze(3).expand(self.batch_s, -1, self.problem_size,
+        #                                                                           2)
+        # # shape = (batch, group, TSP_SIZE, 2)
+        # seq_expanded = self.data[:, None, :, :].expand(self.batch_s, self.group_s, self.problem_size, 2)
 
-        ordered_seq = seq_expanded.gather(dim=2, index=gathering_index)
-        # shape = (batch, group, TSP_SIZE, 2)
+        # ordered_seq = seq_expanded.gather(dim=2, index=gathering_index)
+        # # shape = (batch, group, TSP_SIZE, 2)
 
-        rolled_seq = ordered_seq.roll(dims=2, shifts=-1)
-        segment_lengths = ((ordered_seq - rolled_seq) ** 2).sum(3).sqrt()
-        # size = (batch, group, TSP_SIZE)
+        # rolled_seq = ordered_seq.roll(dims=2, shifts=-1)
+        # segment_lengths = ((ordered_seq - rolled_seq) ** 2).sum(3).sqrt()
+        # # size = (batch, group, TSP_SIZE)
 
-        group_travel_distances = segment_lengths.sum(2)
-        # size = (batch, group)
-        return group_travel_distances
+        # group_travel_distances = segment_lengths.sum(2)
+        # # size = (batch, group)
+
+
+        return self.data['dist']
 
 def get_episode_data(data, episode, batch_size, problem_size):
-    node_data = Tensor(data[0][episode:episode + batch_size])
+    node_data = Tensor(data[episode:episode + batch_size])
 
     return node_data, None
 
@@ -218,8 +222,6 @@ def augment_and_repeat_episode_data(episode_data, problem_size, nb_runs, aug_s):
     return (node_xy)
 
 # ########################################################
-
-AUG_S = 8
 
 class prob_calc_added_layers_TSP(nn.Module):
     """New nn.Module with added layers for the TSP.
@@ -326,10 +328,10 @@ def replace_decoder(grouped_actor, batch_s, state, problem):
     # update node_prob_calculator
     if problem == "CVRP":
         raise NotImplementedError("CVRP not implemented")
-        grouped_actor.node_prob_calculator = prob_calc_added_layers_CVRP(batch_s)
+        grouped_actor = prob_calc_added_layers_CVRP(batch_s)
     elif problem == "TSP":
-        grouped_actor.node_prob_calculator = prob_calc_added_layers_TSP(batch_s)
-    grouped_actor.node_prob_calculator.load_state_dict(state_dict=state, strict=False)
+        grouped_actor = prob_calc_added_layers_TSP(batch_s)
+    grouped_actor.load_state_dict(state_dict=state, strict=False)
 
     return grouped_actor
 
@@ -338,34 +340,34 @@ def replace_decoder(grouped_actor, batch_s, state, problem):
 # Search process
 #######################################################################################################################
 
-def run_eas_lay_decoder(grouped_actor, instance_data, problem_size, config, eval_opts):
+def run_eas_lay_decoder(grouped_actor, instance_data, problem_size, problem_name, eval_opts):
     """
     Efficient active search using added layer updates
     """
 
-    dataset_size = len(instance_data[0])
+    dataset_size = instance_data['coords'].shape[0]
 
-    assert eval_opts.batch_size <= dataset_size
+    # assert eval_opts.eval_batch_size <= dataset_size
 
-    # Save the original state_dict of the decoder
-    original_decoder_state_dict = grouped_actor.node_prob_calculator.state_dict()
+    # Save the original state_dict of the decoder (e.p. the parameters of the decoder)
+    original_decoder_state_dict = grouped_actor.state_dict()
 
     instance_solutions = torch.zeros(dataset_size, problem_size * 2, dtype=torch.int)
     instance_costs = np.zeros((dataset_size))
 
-    if config.problem == "tsp":
+    if problem_name == "tsp":
         pass
         # from source.tsp.env import GROUP_ENVIRONMENT
-    elif config.problem == "cvrp":
+    elif problem_name == "cvrp":
         raise NotImplementedError("CVRP not implemented")
         from source.cvrp.env import GROUP_ENVIRONMENT
 
-    for episode in tqdm(range(math.ceil(dataset_size / eval_opts.batch_size))):
+    for episode in tqdm(range(math.ceil(dataset_size / eval_opts.eval_batch_size))):
 
         # Load the instances
         ###############################################
 
-        episode_data = get_episode_data(instance_data, episode * eval_opts.batch_size, eval_opts.batch_size, problem_size)
+        episode_data = get_episode_data(instance_data['coords'], episode * eval_opts.eval_batch_size, eval_opts.eval_batch_size, problem_size)
         batch_size = episode_data[0].shape[0]  # Number of instances considered in this iteration
 
         batch_r = batch_size * p_runs  # Search runs per batch
@@ -377,8 +379,12 @@ def run_eas_lay_decoder(grouped_actor, instance_data, problem_size, config, eval
             env = GROUP_ENVIRONMENT(aug_data, problem_size)
 
             # Replace the decoder of the loaded model with the modified decoder with added layers
-            grouped_actor_modified = replace_decoder(grouped_actor, batch_s, original_decoder_state_dict,
-                                                     config.problem).cuda()
+            if use_cuda:
+                grouped_actor_modified = replace_decoder(grouped_actor, batch_s, original_decoder_state_dict,
+                                                     problem_name).cuda()
+            else:
+                grouped_actor_modified = replace_decoder(grouped_actor, batch_s, original_decoder_state_dict,
+                                                     problem_name)
 
             group_state, reward, done = env.reset(group_size=group_s)
             grouped_actor_modified.reset(group_state)  # Generate the embeddings
@@ -406,8 +412,7 @@ def run_eas_lay_decoder(grouped_actor, instance_data, problem_size, config, eval
             solutions = []
 
             step = 0
-            if config.problem == "cvrp":
-                raise NotImplementedError("CVRP not implemented")
+            if problem_name == "cvrp":
                 # First Move is given
                 first_action = LongTensor(np.zeros((batch_s, group_s)))  # start from node_0-depot
                 group_state, reward, done = env.step(first_action)
@@ -434,7 +439,7 @@ def run_eas_lay_decoder(grouped_actor, instance_data, problem_size, config, eval
                 if iter > 0:
                     action[:, -1] = incumbent_solutions_expanded[:, step]  # Teacher forcing the imitation learning loss
 
-                if config.problem == "cvrp":
+                if problem_name == "cvrp":
                     action[group_state.finished] = 0  # stay at depot, if you are finished
                 group_state, reward, done = env.step(action)
                 solutions.append(action.unsqueeze(2))
@@ -444,7 +449,7 @@ def run_eas_lay_decoder(grouped_actor, instance_data, problem_size, config, eval
                 group_idx_mat = torch.arange(group_s)[None, :].expand(batch_s, group_s)
                 chosen_action_prob = action_probs[batch_idx_mat, group_idx_mat, action].reshape(batch_s, group_s)
                 # shape = (batch_s, group_s)
-                if config.problem == "cvrp":
+                if problem_name == "cvrp":
                     chosen_action_prob[group_state.finished] = 1  # done episode will gain no more probability
                 group_prob_list = torch.cat((group_prob_list, chosen_action_prob[:, :, None]), dim=2)
                 step += 1
@@ -454,7 +459,7 @@ def run_eas_lay_decoder(grouped_actor, instance_data, problem_size, config, eval
 
             group_reward = reward.reshape(AUG_S, batch_r, group_s)
             solutions = torch.cat(solutions, dim=2)
-            if eval_opts.batch_size == 1:
+            if eval_opts.eval_batch_size == 1:
                 # Single instance search. Only a single incumbent solution exists that needs to be updated
                 max_idx = torch.argmax(reward)
                 best_solution_iter = solutions.reshape(-1, solutions.shape[2])
@@ -497,14 +502,12 @@ def run_eas_lay_decoder(grouped_actor, instance_data, problem_size, config, eval
             loss.backward()
             optimizer.step()
 
-            print(max_reward)
-
             if time.time() - t_start > max_runtime:
                 break
 
         # Store incumbent solutions and their objective function value
-        instance_solutions[episode * eval_opts.batch_size: episode * eval_opts.batch_size + batch_size] = incumbent_solutions
-        instance_costs[
-        episode * eval_opts.batch_size: episode * eval_opts.batch_size + batch_size] = -max_reward.cpu().numpy()
+        # instance_solutions[episode * eval_opts.eval_batch_size: episode * eval_opts.eval_batch_size + batch_size] = incumbent_solutions
+        # instance_costs[
+        # episode * eval_opts.eval_batch_size: episode * eval_opts.eval_batch_size + batch_size] = -max_reward.cpu().numpy()
 
-    return instance_costs, instance_solutions
+    return grouped_actor_modified
