@@ -19,7 +19,7 @@ from utils_vrp import get_random_graph_np
 
 
 
-def save_random_dataset(num_graphs, graph_size, non_Euc, rescale, force_triangle_iter, keep_rel, no_coords, seed, problem="tsp", save=True, save_path=None, dtype="float32"):
+def save_random_dataset(num_graphs, graph_size, non_Euc, rescale, force_triangle_iter, keep_rel, seed, problem="tsp", save=True, save_path=None, dtype="float32"):
 
     if save_path is not None and os.path.exists(save_path):
         logger.info(f"File {cstring.green(save_path)} already exists!")
@@ -27,7 +27,7 @@ def save_random_dataset(num_graphs, graph_size, non_Euc, rescale, force_triangle
             dumped = pickle.load(f)
         return dumped
 
-    data = get_random_graph_np(n=graph_size, num_graphs=num_graphs, non_Euc=non_Euc, no_coords=no_coords,
+    data = get_random_graph_np(n=graph_size, num_graphs=num_graphs, non_Euc=non_Euc, 
                                rescale=rescale, force_triangle_iter=force_triangle_iter, seed=seed,
                                is_cvrp=(problem=="cvrp"), keep_rel=keep_rel)
     # data has keys "coords", "rel_distance", "distance", "scale_factors"
@@ -75,7 +75,6 @@ if __name__ == "__main__":
     parser.add_argument("--rescale", action="store_true", help="whether to include scale factors")
     parser.add_argument("--force_triangle_iter", type=int, default=0, help="force triangle inequality for this many iterations")
     parser.add_argument("--keep_rel", action="store_true", help="whether to keep relative distances")
-    parser.add_argument("--no_coords", action="store_true", help="whether to generate distance matrix in MatNet style")
     parser.add_argument("--dtype", type=str, default="float32", help="np.dtype of the data")
     parser.add_argument("--save_dir", type=str, default=None, help="save directory")
     parser.add_argument("--mini_copy", action="store_true", help="save a mini copy of the dataset")
@@ -92,13 +91,13 @@ if __name__ == "__main__":
     in_gitrepo = save_dir.startswith(gitrepo_path + os.sep)    
     # if the save path is in the git repo, we add "NoTrack" in the name to avoid tracking
 
-    dist_tag = "C" if args.rescale else ("NC" if args.no_coords else "S")
+    dist_tag = "C" if args.rescale else "S"
     save_fn = f"rnd_N{args.graph_size}_I{args.num_graphs}{'_EUC'*args.Euc}_{dist_tag}_seed{args.seed}_iter{args.force_triangle_iter}"
     if args.problem == "cvrp":
         save_fn = f"CVRP_{save_fn}"
     save_path = os.path.join(args.save_dir, save_fn+("_NoTrack"*in_gitrepo)+".pkl")
     data = save_random_dataset(num_graphs=args.num_graphs, graph_size=args.graph_size, non_Euc=not args.Euc,
-                               rescale=args.rescale, force_triangle_iter=args.force_triangle_iter, keep_rel=args.keep_rel, no_coords=args.no_coords,
+                               rescale=args.rescale, force_triangle_iter=args.force_triangle_iter, keep_rel=args.keep_rel,
                                seed=args.seed, save=True, save_path=save_path, problem=args.problem, dtype=args.dtype)
     
     if args.mini_copy:
