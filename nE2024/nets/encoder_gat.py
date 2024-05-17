@@ -199,7 +199,8 @@ class MultiHeadAttention(nn.Module):
             if not matnet_mix_score:
                 self.edge_mlp = MLP(1, [16, 16, n_heads])
             else:
-                self.edge_mlp = MatNet_MixedScore(head_num=n_heads, ms_hidden_dim=16)
+                for i in range(n_heads):
+                    setattr(self, f"edge_mlp_{i}", MLP(2, [10, 1])) # MatNet_MixedScore(head_num=n_heads, ms_hidden_dim=16)
         else:
             self.edge_mlp = None
 
@@ -255,7 +256,15 @@ class MultiHeadAttention(nn.Module):
                 assert edge_matrix_processed.size() == compatibility.size(), f"{edge_matrix_processed.size()} != {compatibility.size()}"
                 compatibility = compatibility + edge_matrix_processed
             else:
-                compatibility = self.edge_mlp(compatibility, edge_matrix)
+                I, N, _ = edge_matrix.size()
+                edge_expand = edge_matrix.unsqueeze(0).expand(compatibility.size()) # (I, N, N) -> (n_heads, I, N, N)
+                two_scores = torch.stack([compatibility, edge_expand], dim=4)   # (n_heads, I, N, N, 2)
+                compatibility_processed = torch.cat([getattr(self, f"edge_mlp_{i}")(two_scores[i].view(-1,2)) for i in range(self.n_heads)], dim=-1)  # (I * N * N, n_heads)
+                compatibility_processed = compatibility_processed.view(I, N, N, self.n_heads).permute(3, 0, 1, 2)   # (n_heads, I, N, N)
+                assert compatibility_processed.size() == compatibility.size(), f"{edge_matrix_processed.size()} != {compatibility.size()}"
+                compatibility = compatibility_processed
+                
+                # compatibility = self.edge_mlp(compatibility, edge_matrix)
 
 
         # Optionally apply mask to prevent attention
