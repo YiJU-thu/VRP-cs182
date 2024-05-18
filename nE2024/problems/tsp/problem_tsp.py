@@ -11,7 +11,7 @@ utils_vrp_path = os.path.join(curr_path, '..', '..', '..', 'utils_project')
 if utils_vrp_path not in sys.path:
     sys.path.append(utils_vrp_path)
 from utils_vrp import get_random_graph, normalize_graph, recover_graph,\
-      get_tour_len_torch, to_torch
+      get_tour_len_torch, to_torch, get_rel_dist_mat_batch
 
 class TSP(object):
 
@@ -68,7 +68,7 @@ class TSP(object):
 class TSPDataset(Dataset):
     
     def __init__(self, filename=None, dataset=None, size=50, num_samples=1000000, offset=0, 
-                 non_Euc=False, rand_dist="standard", rescale=False, distribution=None, force_triangle_iter=2,
+                 non_Euc=False, rand_dist="standard", rescale=False, distribution=None, force_triangle_iter=2, keep_rel=False,
                  normalize_loaded=True):
         
         super(TSPDataset, self).__init__()
@@ -107,15 +107,21 @@ class TSPDataset(Dataset):
             if rand_dist == "standard":
                 assert rescale == False
             rescale_tmp = (rand_dist == "complex")
-            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp, force_triangle_iter=force_triangle_iter)
+            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, 
+                                         rescale=rescale_tmp, force_triangle_iter=force_triangle_iter, keep_rel=keep_rel)
             if (not rescale) and rescale_tmp:
                 self.data = recover_graph(self.data)
 
-        assert self.data["coords"].device == torch.device("cpu"), "Data should be on CPU"
-        # FIXME: a temporary attempt to remove rel_distance
-        keep_rel = False
+        # assert self.data["coords"].device == torch.device("cpu"), "Data should be on CPU"
+        
         if not keep_rel and "rel_distance" in self.data:
             del self.data["rel_distance"]
+        if keep_rel and "distance" in self.data and "rel_distance" not in self.data:
+            assert "coords" in self.data, "Need coords to compute rel_distance"
+            assert self.data.get("scale_factors") is None, "FIXME: scale_factors not supported with rel_distance"
+            coords = self.data["coords"]
+            dist_mat = self.data["distance"]
+            self.data["rel_distance"] = get_rel_dist_mat_batch(coords, dist_mat)
 
     @property
     def size(self):
