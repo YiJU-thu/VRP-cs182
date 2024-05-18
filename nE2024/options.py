@@ -4,6 +4,7 @@ import argparse
 import torch
 from utils.functions import parse_softmax_temperature
 
+from loguru import logger
 
 def get_options(args=None):
     parser = argparse.ArgumentParser(
