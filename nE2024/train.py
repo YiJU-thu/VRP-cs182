@@ -260,7 +260,7 @@ def train_batch(
 
         t0 = time.perf_counter()
         # Evaluate baseline, get baseline loss if any (only for critic)
-        bl_val, bl_loss = baseline.eval(x, cost) if bl_val is None else (bl_val, torch.tensor(0.0).to(x.device))
+        bl_val, bl_loss = baseline.eval(x, cost) if bl_val is None else (bl_val, torch.tensor(0.0).to(cost.device))
         model.update_time_count(baseline_eval=time.perf_counter()-t0)    # record baseline evaluation time
 
         # Calculate loss

@@ -185,7 +185,7 @@ class RolloutBaseline(Baseline):
 
         if dataset is None:
             self.dataset = self.problem.make_dataset(
-                size=self.opts.graph_size, num_samples=self.opts.val_size, 
+                size=self.opts.graph_size, num_samples=self.opts.val_size, no_coords=self.opts.no_coords, keep_rel=self.opts.keep_rel,
                 non_Euc=self.opts.non_Euc, rand_dist=self.opts.rand_dist, rescale=self.opts.rescale_dist, distribution=self.opts.data_distribution)
         else:
             self.dataset = dataset
@@ -275,7 +275,7 @@ class PomoBaseline(Baseline):
     def eval(self, x, c):
         # c: (B*N1*N2,)
         N1, N2 = self.n_sample_start, self.n_sample_rot
-        assert len(c) == self.opts.batch_size * N1 * N2, "c size mismatch"
+        assert len(c) == self.opts.batch_size * N1 * N2, f"c size mismatch: {len(c)} != {self.opts.batch_size * N1 * N2}"
         B = c.size(0)//(N1*N2)  # batch size
 
         # reshape c to (B, N1*N2) and return mean of c for each row as the shared baseline
