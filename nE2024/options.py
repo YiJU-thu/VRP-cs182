@@ -228,7 +228,11 @@ def get_options(args=None):
                 filenames = {k: filenames[k] for k in fns}
         opts.sl_filenames = filenames
 
-
+    opts.keep_rel = False
+    if (opts.encode_original_edge == False) and (opts.n_edge_encode_layers > 0):
+        opts.keep_rel = True
+    if (opts.svd_original_edge == False) and (opts.rank_k_approx > 0):
+        opts.keep_rel = True
 
 
     return opts
