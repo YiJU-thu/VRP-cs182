@@ -4,6 +4,7 @@ from torch import nn
 from torch.nn import DataParallel
 from torch.utils.checkpoint import checkpoint
 from torchvision.ops import MLP
+import torch.nn.functional as F
 import math
 
 from nets.init_embed import InitEncoder
@@ -24,6 +25,7 @@ class AttentionEncoder(nn.Module):
                  full_svd=False,
                  only_distance=False,
                  n_edge_encode_layers=0,
+                 matnet_mix_score=False,
                  encode_original_edge=False,
                  rescale_dist=False,
                  n_encode_layers=2,
@@ -32,7 +34,9 @@ class AttentionEncoder(nn.Module):
                  checkpoint_encoder=False,
                  return_heatmap=False,
                  umat_embed_layers=3,
-                 aug_graph_embed_layers=3
+                 aug_graph_embed_layers=3,
+                 no_coords=False,
+                 random_node_dim=0
                  ):
         super(AttentionEncoder, self).__init__()
 
@@ -82,7 +86,9 @@ class AttentionEncoder(nn.Module):
             svd_original_edge=svd_original_edge,
             mul_sigma_uv=mul_sigma_uv,
             full_svd=full_svd,
-            only_distance=only_distance
+            only_distance=only_distance,
+            no_coords=no_coords,
+            random_node_dim=random_node_dim
         )
 
         self.embedder = GraphAttentionEncoder(
@@ -96,7 +102,8 @@ class AttentionEncoder(nn.Module):
             rescale_dist=rescale_dist,
             return_u_mat=self.return_heatmap, # if True, return a compatibility matrix; else, return node embeddings & graph embedding
             umat_embed_layers=umat_embed_layers,
-            aug_graph_embed_layers=aug_graph_embed_layers
+            aug_graph_embed_layers=aug_graph_embed_layers,
+            matnet_mix_score=matnet_mix_score
         )
 
 
@@ -105,7 +112,7 @@ class AttentionEncoder(nn.Module):
         :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
         :return:
         """
-        I, N, _ = input['coords'].shape
+        I, N = self.init_embed._get_input_shape(input)
         scale_factors_dim = 2 * self.non_Euc + 1
         if self.rescale_dist:
             assert input['scale_factors'].shape == (I, scale_factors_dim), "scale_dist must be of shape (I, scale_factors_dim)"
@@ -158,6 +165,7 @@ class MultiHeadAttention(nn.Module):
             val_dim=None,
             key_dim=None,
             encode_edge_matrix=False,
+            matnet_mix_score=False,
             return_u_mat=False
     ):
         super(MultiHeadAttention, self).__init__()
@@ -185,9 +193,14 @@ class MultiHeadAttention(nn.Module):
             self.W_out = nn.Parameter(torch.Tensor(n_heads, val_dim, embed_dim))
 
         self.encode_edge_matrix = encode_edge_matrix
+        self.matnet_mix_score = matnet_mix_score    # using the mixed score methods MatNet used
         if encode_edge_matrix:
             # FIXME: this MLP structure is arbitrarily chosen
-            self.edge_mlp = MLP(1, [16, 16, n_heads])
+            if not matnet_mix_score:
+                self.edge_mlp = MLP(1, [16, 16, n_heads])
+            else:
+                for i in range(n_heads):
+                    setattr(self, f"edge_mlp_{i}", MLP(2, [10, 1])) # MatNet_MixedScore(head_num=n_heads, ms_hidden_dim=16)
         else:
             self.edge_mlp = None
 
@@ -235,12 +248,23 @@ class MultiHeadAttention(nn.Module):
 
         # TODO: add edge matrix encodings here
         if self.encode_edge_matrix:
-            I, N, _ = edge_matrix.size()
-            edge_matrix_flat = edge_matrix.view(-1, 1)  
-            edge_matrix_processed = self.edge_mlp(edge_matrix_flat) 
-            edge_matrix_processed = edge_matrix_processed.view(I, N, N, self.n_heads).permute(3, 0, 1, 2)
-            assert edge_matrix_processed.size() == compatibility.size(), f"{edge_matrix_processed.size()} != {compatibility.size()}"
-            compatibility = compatibility + edge_matrix_processed
+            if not self.matnet_mix_score:
+                I, N, _ = edge_matrix.size()
+                edge_matrix_flat = edge_matrix.view(-1, 1)  
+                edge_matrix_processed = self.edge_mlp(edge_matrix_flat) 
+                edge_matrix_processed = edge_matrix_processed.view(I, N, N, self.n_heads).permute(3, 0, 1, 2)
+                assert edge_matrix_processed.size() == compatibility.size(), f"{edge_matrix_processed.size()} != {compatibility.size()}"
+                compatibility = compatibility + edge_matrix_processed
+            else:
+                I, N, _ = edge_matrix.size()
+                edge_expand = edge_matrix.unsqueeze(0).expand(compatibility.size()) # (I, N, N) -> (n_heads, I, N, N)
+                two_scores = torch.stack([compatibility, edge_expand], dim=4)   # (n_heads, I, N, N, 2)
+                compatibility_processed = torch.cat([getattr(self, f"edge_mlp_{i}")(two_scores[i].view(-1,2)) for i in range(self.n_heads)], dim=-1)  # (I * N * N, n_heads)
+                compatibility_processed = compatibility_processed.view(I, N, N, self.n_heads).permute(3, 0, 1, 2)   # (n_heads, I, N, N)
+                assert compatibility_processed.size() == compatibility.size(), f"{edge_matrix_processed.size()} != {compatibility.size()}"
+                compatibility = compatibility_processed
+                
+                # compatibility = self.edge_mlp(compatibility, edge_matrix)
 
 
         # Optionally apply mask to prevent attention
@@ -278,6 +302,52 @@ class MultiHeadAttention(nn.Module):
         # out = torch.einsum('hbni,hij->bnj', heads, self.W_out)
 
         return out
+
+
+
+class MatNet_MixedScore(nn.Module):
+    # ref: [MixedScore_MultiHeatAttention] https://github.com/yd-kwon/MatNet/blob/main/ATSP/ATSP_MatNet/ATSPModel_LIB.py
+
+    def __init__(self, head_num, ms_hidden_dim=16):
+        super().__init__()
+        
+        
+        # ref: [model_params] https://github.com/yd-kwon/MatNet/blob/782698b60979effe2e7b61283cca155b7cdb727f/ATSP/ATSP_MatNet/train.py
+
+        mix1_init = (1/2) ** (1/2)
+        mix2_init = (1/16) ** (1/2)
+
+        mix1_weight = torch.torch.distributions.Uniform(low=-mix1_init, high=mix1_init).sample((head_num, 2, ms_hidden_dim))
+        mix1_bias = torch.torch.distributions.Uniform(low=-mix1_init, high=mix1_init).sample((head_num, ms_hidden_dim))
+        self.mix1_weight = nn.Parameter(mix1_weight)
+        # shape: (head, 2, ms_hidden)
+        self.mix1_bias = nn.Parameter(mix1_bias)
+        # shape: (head, ms_hidden)
+
+        mix2_weight = torch.torch.distributions.Uniform(low=-mix2_init, high=mix2_init).sample((head_num, ms_hidden_dim, 1))
+        mix2_bias = torch.torch.distributions.Uniform(low=-mix2_init, high=mix2_init).sample((head_num, 1))
+        self.mix2_weight = nn.Parameter(mix2_weight)
+        # shape: (head, ms_hidden, 1)
+        self.mix2_bias = nn.Parameter(mix2_bias)
+        # shape: (head, 1)
+    
+    def forward(self, internal_score, external_score):
+        """
+        params:
+            internal_score: (head, batch, N, N), i.e., (scaled) Q.T @ K
+            external_score: (batch, N, N), i.e., distance matrix
+        """
+        internal_score = internal_score.permute(1, 0, 2, 3)  # (batch, head, N, N)
+        external_score = external_score.unsqueeze(1).expand_as(internal_score)  # (batch, head, N, N)
+        two_scores = torch.stack([internal_score, external_score], dim=4).transpose(1,2)    # (batch, N, head, N, 2)
+        ms1_activated = F.relu(
+            torch.matmul(two_scores, self.mix1_weight) + self.mix1_bias[None, None, :, None, :]
+        )
+        ms2 = torch.matmul(ms1_activated, self.mix2_weight) + self.mix2_bias[None, None, :, None, :]
+        mixed_scores = ms2.transpose(1, 2).squeeze(-1)   # (batch, head, N, N)
+        return mixed_scores.permute(1, 0, 2, 3)  # (head, batch, N, N)
+
+
 
 
 class Normalization(nn.Module):
@@ -319,6 +389,7 @@ class MultiHeadAttentionLayer(nn.Sequential):
             n_heads,
             embed_dim,
             encode_edge_matrix=False,
+            matnet_mix_score=False,
             feed_forward_hidden=512,
             normalization='batch',
             return_u_mat=False
@@ -330,6 +401,7 @@ class MultiHeadAttentionLayer(nn.Sequential):
                     input_dim=embed_dim,
                     embed_dim=embed_dim,
                     encode_edge_matrix=encode_edge_matrix,
+                    matnet_mix_score=matnet_mix_score,
                     return_u_mat=True
                 )
             )
@@ -341,7 +413,8 @@ class MultiHeadAttentionLayer(nn.Sequential):
                     n_heads,
                     input_dim=embed_dim,
                     embed_dim=embed_dim,
-                    encode_edge_matrix=encode_edge_matrix
+                    encode_edge_matrix=encode_edge_matrix,
+                    matnet_mix_score=matnet_mix_score,
                 )
             ),
             Normalization(embed_dim, normalization),
@@ -373,7 +446,8 @@ class GraphAttentionEncoder(nn.Module):
             normalization='batch',
             feed_forward_hidden=512,
             return_u_mat=False,
-            umat_embed_layers=3
+            umat_embed_layers=3,
+            matnet_mix_score=False
     ):
         super(GraphAttentionEncoder, self).__init__()
 
@@ -390,6 +464,7 @@ class GraphAttentionEncoder(nn.Module):
         self.layers = nn.Sequential(*(
             MultiHeadAttentionLayer(n_heads, embed_dim, feed_forward_hidden=feed_forward_hidden, 
                                     normalization=normalization, encode_edge_matrix=(i < n_edge_encode_layers),
+                                    matnet_mix_score=matnet_mix_score,
                                     return_u_mat=((i == n_layers-1) and return_u_mat))
             for i in range(n_layers)
         ))

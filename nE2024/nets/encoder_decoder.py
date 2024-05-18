@@ -85,6 +85,42 @@ class VRPModel(nn.Module):
         return res
 
     
+    def get_loss(self, input, ref_pi=None, loss_type="rl", loss_params=None, **kws):
+        """
+        :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
+        :param ref_pi: reference sequence to calculate the log likelihood
+        :param loss_params: dict
+        :return:
+        """
+
+        if loss_type == "ul":   # unsupervised learning
+            loss, loss_misc = self.get_ul_loss(input, c1=loss_params["c1"])
+        else:
+            raise NotImplementedError(f"Loss type {loss_type} not implemented")
+        return loss, loss_misc
+            
+
+
+    def get_ul_loss(self, input, c1=10):
+        
+        dist_mat = input["distance"]
+        heatmap = self._encoder(input)["heatmap"]   # (I, N, N), log_p
+        prob_mat = torch.softmax(heatmap, dim=-1) # each row sum to 1, now it becomes a probability matrix
+        
+        # make diagonal elements 0, and normalize the rows
+        prob_mat = prob_mat * (1 - torch.eye(prob_mat.size(1), device=prob_mat.device))
+        prob_mat = prob_mat / prob_mat.sum(dim=-1, keepdim=True)
+
+        tsp_loss = torch.sum(prob_mat * dist_mat, dim=(1,2))
+        col_sum_one_loss = torch.sum((1-torch.sum(prob_mat, dim=1))**2, dim=-1) # push the sum of each column to 1
+        loss = tsp_loss + c1 * col_sum_one_loss
+        assert loss.shape == (input["distance"].shape[0],), f"loss shape: {loss.shape}"
+
+        return torch.mean(loss), {"tsp_loss": torch.mean(tsp_loss), "col_sum_one_loss": torch.mean(col_sum_one_loss)}
+        
+
+
+
     def set_decode_type(self, decode_type, temp=None):
         self._decoder.set_decode_type(decode_type, temp)
     
