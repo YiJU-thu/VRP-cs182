@@ -12,6 +12,7 @@ def get_options(args=None):
     # [Data]
     parser.add_argument('--problem', default='tsp', help="The problem to solve, default 'tsp'")
     parser.add_argument('--non_Euc', action='store_true', help="Whether the problem is non-Euclidean. If the case, both coords and distance matrix will be provided")
+    parser.add_argument('--no_coords', action='store_true', help="Whether to use coordinates in the model")
     parser.add_argument('--graph_size', type=int, default=20, help="The size of the problem graph")
     parser.add_argument('--batch_size', type=int, default=512, help='Number of instances per batch during training')
     parser.add_argument('--batch_per_epoch', type=int, default=2000, help='Number of batches per epoch during training')
@@ -28,8 +29,8 @@ def get_options(args=None):
 
     # GAT encoder kwargs
     gat_init_encoder_kws = ["embedding_dim", "hidden_dim", "problem", "non_Euc", 
-                       "rank_k_approx", "svd_original_edge", "mul_sigma_uv", "full_svd", "only_distance",]
-    gat_encoder_kws = gat_init_encoder_kws + ["n_edge_encode_layers", "encode_original_edge", "rescale_dist", "n_encode_layers", 
+                       "rank_k_approx", "svd_original_edge", "mul_sigma_uv", "full_svd", "only_distance", "no_coords", "random_node_dim"]
+    gat_encoder_kws = gat_init_encoder_kws + ["n_edge_encode_layers", "encode_original_edge", "matnet_mix_score", "rescale_dist", "n_encode_layers", 
                        "normalization", "n_heads", "checkpoint_encoder", "return_heatmap", "umat_embed_layers", "aug_graph_embed_layers"]
 
     parser.add_argument('--embedding_dim', type=int, default=128, help='Dimension of input embedding')
@@ -41,6 +42,7 @@ def get_options(args=None):
     parser.add_argument('--rank_k_approx', type=int, default=0, help='compute rank k-approx of dist matrix to argument node features')
     parser.add_argument('--n_edge_encode_layers', type=int, default=0, help='add edge matrix encodings to the first n attention layers')
     parser.add_argument('--encode_original_edge', action='store_true', help='if not, encode the relative distance matrix')
+    parser.add_argument('--matnet_mix_score', action='store_true', help='if True, use the mixing mathod as MatNet. Otherwise, use the "our" method')
     parser.add_argument('--svd_original_edge', action='store_true', help='if not, do SVD on the relative distance matrix')
     parser.add_argument('--full_svd', action='store_true', help='if not, use randomized algorithm to perform faster SVD')
     parser.add_argument('--mul_sigma_uv', action='store_true', help='if True, add sqrt(sigma) u, sqrt(sigma) v to the node features')
@@ -49,18 +51,20 @@ def get_options(args=None):
     parser.add_argument('--umat_embed_layers', type=int, default=3, help='number of MLP hidden layers for umat embedding')
     parser.add_argument('--aug_graph_embed_layers', type=int, default=3, help='number of MLP hidden layers for augmented graph embedding')
     parser.add_argument('--rescale_dist', action='store_true', help='if rand_dist is not standard, whether to rescale it to standard')
+    parser.add_argument('--random_node_dim', type=int, default=0, help='randomly generate initial node features of this dimension in U(0,1)')
     parser.add_argument('--checkpoint_encoder', action='store_true',
                         help='Set to decrease memory usage by checkpointing encoder')
 
     
     # GCN encoder kwargs
+    gcn_init_encoder_kws = gat_init_encoder_kws + ["edge_embedding_dim", "adj_mat_embedding_dim", "kNN"]
+    gcn_encoder_kws = gcn_init_encoder_kws + ["encode_original_edge", "rescale_dist", "n_encode_layers", "normalization", 
+                                              "checkpoint_encoder", "return_heatmap", "umat_embed_layers", "aug_graph_embed_layers", "gcn_aggregation"]
     parser.add_argument('--edge_embedding_dim', type=int, default=None, help='Dimension of edge embedding')
     parser.add_argument('--adj_mat_embedding_dim', type=int, default=None, help='Dimension of adjacency matrix embedding')
     parser.add_argument('--kNN', type=int, default=20, help='Number of nearest neighbors to consider in the adjacency matrix')
     parser.add_argument('--gcn_aggregation', default='sum', help="Aggregation type, 'mean' or 'sum' (default)")
-    gcn_init_encoder_kws = gat_init_encoder_kws + ["edge_embedding_dim", "adj_mat_embedding_dim", "kNN"]
-    gcn_encoder_kws = gcn_init_encoder_kws + ["encode_original_edge", "rescale_dist", "n_encode_layers", "normalization", 
-                                              "checkpoint_encoder", "return_heatmap", "umat_embed_layers", "aug_graph_embed_layers", "gcn_aggregation"]
+    
     
     # GAT decoder kwargs 
     gat_decoder_kws = ["embedding_dim", "problem", "update_context_node", "tanh_clipping", "mask_inner", "mask_logits", "n_heads", "shrink_size"]
@@ -90,7 +94,8 @@ def get_options(args=None):
     parser.add_argument('--n_aug', type=int, default=1, help='Number of augmentations per sample.')
     parser.add_argument('--n_loaded_files', type=int, default=10, help='Number of files loaded at once')
     parser.add_argument('--start_file_idx', type=int, default=0, help='Index of the first file to load')
-    parser.add_argument('--sl_debug', action='store_true', help='Debug mode for SL')
+    parser.add_argument('--sl_debug', action='store_true', help='Debug mode for SL (use local files)')
+    parser.add_argument('--ul_loss_c1', type=float, default=10, help='Coefficient for penalty on column sum')
 
     parser.add_argument('--optimizer', default='adam', help="Optimizer to use, 'adam' (default) or 'adamW'")
     parser.add_argument('--lr_model', type=float, default=1e-4, help="Set the learning rate for the actor network")
@@ -99,7 +104,7 @@ def get_options(args=None):
     parser.add_argument('--weight_decay_model', type=float, default=0, help='Weight decay (L2 penalty) for the actor network')
     parser.add_argument('--weight_decay_critic', type=float, default=0, help='Weight decay (L2 penalty) for the critic network')
     parser.add_argument('--eval_only', action='store_true', help='Set this value to only evaluate model')
-    parser.add_argument('--n_epochs', type=int, default=300, help='The number of epochs to train')
+    parser.add_argument('--n_epochs', type=int, default=1000, help='The number of epochs to train')
     parser.add_argument('--seed', type=int, default=1234, help='Random seed to use')
     parser.add_argument('--max_grad_norm', type=float, default=1.0,
                         help='Maximum L2 norm for gradient clipping, default 1.0 (0 to disable clipping)')
@@ -228,12 +233,15 @@ def get_options(args=None):
                 filenames = {k: filenames[k] for k in fns}
         opts.sl_filenames = filenames
 
+    if opts.learning_scheme == 'USL':
+        assert opts.decoder == 'nAR', "USL only supports nAR decoder"
+        assert opts.baseline is None, "USL only supports no baseline"
+
     opts.keep_rel = False
     if (opts.encode_original_edge == False) and (opts.n_edge_encode_layers > 0):
         opts.keep_rel = True
     if (opts.svd_original_edge == False) and (opts.rank_k_approx > 0):
         opts.keep_rel = True
-
 
     return opts
 

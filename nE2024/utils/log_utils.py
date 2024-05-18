@@ -1,5 +1,5 @@
 def log_values(cost, grad_norms, epoch, batch_id, step,
-               log_likelihood, reinforce_loss, bl_loss, time_stats, tb_logger, wandb_logger, opts):
+               log_likelihood, loss_misc, time_stats, tb_logger, wandb_logger, opts):
     avg_cost = cost.mean().item() if cost is not None else None
     grad_norms, grad_norms_clipped = grad_norms
 
@@ -19,18 +19,22 @@ def log_values(cost, grad_norms, epoch, batch_id, step,
     if not opts.no_tensorboard:
         if avg_cost is not None:
             tb_logger.log_value('avg_cost', avg_cost, step)
-        if reinforce_loss is not None:
-            tb_logger.log_value('actor_loss', reinforce_loss.item(), step)
+        if loss_misc is not None:
+            for k, v in loss_misc.items():
+                if k == "critic_loss":
+                    continue
+                if v is not None:
+                    tb_logger.log_value(k, v.item(), step)
         
         tb_logger.log_value('nll', -log_likelihood.mean().item(), step)
 
         tb_logger.log_value('grad_norm', grad_norms[0], step)
         tb_logger.log_value('grad_norm_clipped', grad_norms_clipped[0], step)
 
-        if opts.baseline == 'critic':
-            tb_logger.log_value('critic_loss', bl_loss.item(), step)
-            tb_logger.log_value('critic_grad_norm', grad_norms[1], step)
-            tb_logger.log_value('critic_grad_norm_clipped', grad_norms_clipped[1], step)
+        # if opts.baseline == 'critic':
+        #     tb_logger.log_value('critic_loss', bl_loss.item(), step)
+        #     tb_logger.log_value('critic_grad_norm', grad_norms[1], step)
+        #     tb_logger.log_value('critic_grad_norm_clipped', grad_norms_clipped[1], step)
         
         if opts.baseline == 'pomo':
             tb_logger.log_value('pomo_div_pct', div_pct, step)
@@ -46,15 +50,19 @@ def log_values(cost, grad_norms, epoch, batch_id, step,
     }
     if avg_cost is not None:
         log_info['avg_cost'] = avg_cost
-    if reinforce_loss is not None:
-        log_info['actor_loss'] = reinforce_loss.item()
+    if loss_misc is not None:
+        for k, v in loss_misc.items():
+            if k == "critic_loss":
+                continue
+            if v is not None:
+                log_info[k] = v.item()
         
-    if opts.baseline == 'critic':
-        log_info.update({
-            'critic_loss': bl_loss.item(),
-            'critic_grad_norm': grad_norms[1],
-            'critic_grad_norm_clipped': grad_norms_clipped[1],
-        })
+    # if opts.baseline == 'critic':
+    #     log_info.update({
+    #         'critic_loss': bl_loss.item(),
+    #         'critic_grad_norm': grad_norms[1],
+    #         'critic_grad_norm_clipped': grad_norms_clipped[1],
+    #     })
     if opts.baseline == 'pomo':
         log_info.update({
             'pomo_div_pct': div_pct,
