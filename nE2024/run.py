@@ -180,7 +180,8 @@ def run(opts):
     with torch.device("cpu"): # make sure the dataset is on CPU
         val_dataset = problem.make_dataset(
             size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, normalize_loaded=False, # if load from file, do not (repeatedly) normalize
-            non_Euc=opts.non_Euc, rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution, no_coords=opts.no_coords, keep_rel=opts.keep_rel)
+            non_Euc=opts.non_Euc, rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution, 
+            no_coords=opts.no_coords, keep_rel=opts.keep_rel, force_triangle_iter=4)
 
     if opts.resume:
         epoch_resume = load_data.get('epoch')
