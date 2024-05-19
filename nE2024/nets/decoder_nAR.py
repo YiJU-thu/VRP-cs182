@@ -80,7 +80,11 @@ class NonAutoRegDecoder(nn.Module):
         _log_p, pi = self._inner(input, heatmap, force_steps=force_steps, ref_pi=ref_pi)
 
         for i in range(force_steps):
-            assert pi[:, i].eq(i).all(), "Forced output incorrect"
+            if self.problem.NAME == 'tsp':
+                assert pi[:, i].eq(i).all(), "Forced output incorrect"
+            elif self.problem.NAME == 'cvrp':
+                assert i == 0
+                assert pi[:, i].eq(i+1).all(), "Forced output incorrect"
         
         cost, mask = self.problem.get_costs(input, pi)
         # Log likelyhood is calculated within the model since returning it per action does not work well with
@@ -183,7 +187,13 @@ class NonAutoRegDecoder(nn.Module):
                 # Select the indices of the next nodes in the sequences, result (batch_size) long
                 selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
             else:
-                selected = torch.tensor([i]*batch_size, device=log_p.device)
+                if self.problem.NAME == 'tsp':
+                    selected = torch.tensor([i]*batch_size, device=log_p.device)
+                elif self.problem.NAME == 'cvrp':
+                    assert i == 0, "For CVRP, force_steps should be at most 1 (POMO)"
+                    selected = torch.tensor([1]*batch_size, device=log_p.device)    # node 0 is depot and already be taken!
+                else:
+                    raise NotImplementedError("force_steps is not implemented for {}".format(self.problem.NAME))
                 # NOTE: SHPP: 0 -> 1 -> xxx
                 # so when use SHPP mode to solve SHPP, let terminal=0, start=1
 

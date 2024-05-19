@@ -264,8 +264,8 @@ class PomoBaseline(Baseline):
     def wrap_dataset(self, dataset):
         # print("Sample for the instance ...")
         # Just do PO-MO augmentation for TSP
-        if self.problem.NAME == 'tsp':
-            dataset.pomo_augment(self.n_sample_start, self.n_sample_rot)
+        assert self.problem.NAME in ['tsp', 'cvrp'], "PO-MO augmentation is only supported for TSP and CVRP"
+        dataset.pomo_augment(self.n_sample_start, self.n_sample_rot)
 
         return dataset
 
