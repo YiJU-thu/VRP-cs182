@@ -32,7 +32,7 @@ class CVRP(object):
 
         # Sorting it should give all zeros at front and then 1...n
         assert (
-            torch.arange(1, graph_size + 1, out=pi.data.new()).view(1, -1).expand(batch_size, graph_size) ==
+            torch.arange(1, graph_size + 1, out=pi.data.new(), device=pi.device).view(1, -1).expand(batch_size, graph_size) ==
             sorted_pi[:, -graph_size:]
         ).all() and (sorted_pi[:, :-graph_size] == 0).all(), "Invalid tour"
 
