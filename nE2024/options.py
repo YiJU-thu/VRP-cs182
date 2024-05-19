@@ -22,7 +22,7 @@ def get_options(args=None):
                         help='Number of instances used for reporting validation performance')
     parser.add_argument('--val_dataset', type=str, default=None, help='Dataset file to use for validation')
     parser.add_argument('--rand_dist', type=str, default='standard', help='"standard" or "complex"') # FIXME: can be combined with data_distribution
-    
+    parser.add_argument('--force_force_triangle_iter', type=int, default=2, help='run triangle inequality violation elimination for this many iterations')
     
     # [Model]
     parser.add_argument('--encoder', default='gat', help="Encoder name, 'gat' (default) or 'gcn'")
