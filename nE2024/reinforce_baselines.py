@@ -195,6 +195,8 @@ class RolloutBaseline(Baseline):
         self.epoch = epoch
 
     def wrap_dataset(self, dataset):
+        # FIXME: this is not a good way to do so ...  
+        dataset.pomo_augment(self.opts.pomo_sample, self.opts.rot_sample)
         print("Evaluating baseline on dataset...")
         # Need to convert baseline to 2D to prevent converting to double, see
         # https://discuss.pytorch.org/t/dataloader-gives-double-instead-of-float/717/3
