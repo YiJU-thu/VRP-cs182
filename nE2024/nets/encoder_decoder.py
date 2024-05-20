@@ -96,7 +96,6 @@ class VRPModel(nn.Module):
     
 
     def beam_search(self, input, beam_size, compress_mask, max_calc_batch_size, sgbs=False, gamma = 0):
-        print(input["coords"].shape)
         # NOTE: for different problems, the input may be different (in old versions)
         fixed = self.precompute_fixed(input)
 
@@ -213,8 +212,4 @@ class VRPModel(nn.Module):
 
     def eas_decoder(self, input, problem_name, eval_opts):
         # raise NotImplementedError("EAS not implemented for decoder")
-        grouped_actor = self._decoder
-        instance_data_scaled = input
-        problem_size = input["coords"].shape[1]
-
-        return run_eas_lay_decoder(grouped_actor, instance_data_scaled, problem_size, problem_name, eval_opts)
+        return run_eas_lay_decoder(self._encoder, self._decoder, input, problem_name, eval_opts)

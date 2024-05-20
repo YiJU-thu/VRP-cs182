@@ -135,12 +135,13 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
         batch = move_to(batch, device)
 
         if opts.EAS != 0:
+            ##### To Do: Add specific path of training dataset for EAS ######
             print('####### Do EAS ######')
             start = time.time()
             if opts.EAS == 1:
                 model._encoder = model.eas_encoder(batch)
             elif opts.EAS == 2:
-                model._decoder = model.eas_decoder(batch, model.problem.NAME, eval_opts = opts)
+                model._decoder._get_log_p = model.eas_decoder(batch, model.problem.NAME, eval_opts = opts)
             else:
                 raise NotImplementedError("EAS not implemented for EAS = ", opts.EAS)
             duration = time.time() - start
