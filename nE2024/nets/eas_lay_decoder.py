@@ -16,7 +16,7 @@ ACTOR_WEIGHT_DECAY = 1e-6
 param_lr = 0.0032 # EAS Learning rate
 p_runs = 1  # Number of parallel runs per instance, set 1 here
 max_iter = 100 # Maximum number of EAS iterations
-param_lambda = 0.012 # Imitation learning loss weight
+param_lambda = 1 # Imitation learning loss weight
 max_runtime = 1000 # Maximum runtime in seconds
 
 use_cuda = torch.cuda.is_available()
@@ -200,28 +200,19 @@ def run_eas_lay_decoder(encoder, grouped_actor, instance_data, problem_name, eva
         input, embed = do_batch_rep((instance_data, embed), batch_rep)
 
         costs = []
-        pis = []
+        _log_p_s = []
         for i in range(iter_rep):
             cost, _log_p, pi = grouped_actor_modified(input, return_pi=True, **embed)
 
             costs.append(cost.view(batch_rep, -1).t())
-            pis.append(pi.view(batch_rep, -1, pi.size(-1)).transpose(0, 1))
+            _log_p_s.append(_log_p.view(batch_rep, -1).t())
 
-        max_length = max(pi.size(-1) for pi in pis)
-        # (batch_size * batch_rep, iter_rep, max_length) => (batch_size, batch_rep * iter_rep, max_length)
-        pis = torch.cat(
-            [F.pad(pi, (0, max_length - pi.size(-1))) for pi in pis],
-            1
-        )  # .view(embeddings.size(0), batch_rep * iter_rep, max_length)
         costs = torch.cat(costs, 1)
+        _log_p_s = torch.cat(_log_p_s, 1)
 
-        # (batch_size)
-        mincosts, argmincosts = costs.min(-1)
-        # (batch_size, minlength)
-        minpis = pis[torch.arange(pis.size(0), out=argmincosts.new()), argmincosts]
-        loss_1 = mincosts.mean()
-        loss_2 = -_log_p.mean()
-        loss = loss_1 + loss_2
+        loss_1 = costs.mean()
+        loss_2 = -_log_p_s.mean()
+        loss = loss_1 + param_lambda*loss_2
 
         optimizer.zero_grad()
         loss.backward()

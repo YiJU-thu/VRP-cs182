@@ -14,6 +14,7 @@ import time
 from copy import deepcopy
 
 from nets.eas_lay_decoder import run_eas_lay_decoder
+from nets.eas_lay_encoder import run_eas_lay_encoder
 # from options import get_options, get_eval_options
 
 class VRPModel(nn.Module):
@@ -207,8 +208,9 @@ class VRPModel(nn.Module):
             return {f'T-{key}': 0 for key in self.time_count}
         return {f'T-{key}': self.time_count[key] / total_time for key in self.time_count}
     
-    def eas_encoder(self, input):
-        raise NotImplementedError("EAS not implemented for encoder")
+    def eas_encoder(self, input, problem_name, eval_opts):
+        # raise NotImplementedError("EAS not implemented for encoder")
+        return run_eas_lay_encoder(self._encoder, self._decoder, input, problem_name, eval_opts)
 
     def eas_decoder(self, input, problem_name, eval_opts):
         # raise NotImplementedError("EAS not implemented for decoder")
