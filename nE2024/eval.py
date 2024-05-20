@@ -98,7 +98,7 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
     model.eval()
 
     model.set_decode_type(
-        "greedy" if opts.decode_strategy in ('bs', 'greedy') else "sampling",
+        "greedy" if opts.decode_strategy in ('bs', 'greedy', 'sgbs') else "sampling",
         temp=softmax_temp)
 
     dataloader = DataLoader(dataset, batch_size=opts.eval_batch_size)
@@ -110,6 +110,20 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
             batch["scale_factors"] = None
         
         batch = move_to(batch, device)
+
+        if opts.EAS != 0:
+            ##### To Do: Add specific path of training dataset for EAS ######
+            print('####### Do EAS ######')
+            start = time.time()
+            if opts.EAS == 1:
+                model._encoder = model.eas_encoder(batch)
+            elif opts.EAS == 2:
+                model._decoder._get_log_p = model.eas_decoder(batch, model.problem.NAME, eval_opts = opts)
+            else:
+                raise NotImplementedError("EAS not implemented for EAS = ", opts.EAS)
+            duration = time.time() - start
+            print('EAS duration: ', duration)
+            print('####### EAS Done ######')
 
         start = time.time()
         with torch.no_grad():
@@ -133,7 +147,11 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                 assert batch_rep > 0
                 # This returns (batch_size, iter_rep shape)
                 sequences, costs = model.sample_many(batch, batch_rep=batch_rep, iter_rep=iter_rep)
-            else:
+
+#                 batch_size = len(costs)
+#                 ids = torch.arange(batch_size, dtype=torch.int64, device=costs.device)
+
+            elif opts.decode_strategy == 'bs':
                 assert opts.decode_strategy == 'bs'
 
                 sequences, costs = model.beam_search(
@@ -141,6 +159,30 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                     compress_mask=opts.compress_mask,
                     max_calc_batch_size=opts.max_calc_batch_size
                 )
+
+            elif opts.decode_strategy == 'sgbs':
+                # raise NotImplementedError("Sgbs not implemented now")                
+                sequences, costs = model.beam_search(
+                    batch, beam_size=width,
+                    compress_mask=opts.compress_mask,
+                    max_calc_batch_size=opts.max_calc_batch_size,
+                    sgbs = True,
+                    gamma = opts.gamma,
+                )
+        # FIXME: this is a hack to make things work
+        # TODO: this should be moved to utils.functions
+        if sequences is None:
+            sequences = [None] * batch_size
+            costs = [math.inf] * batch_size
+        else:
+            sequences, costs = get_best(
+                sequences.cpu().numpy(), costs.cpu().numpy(),
+                ids.cpu().numpy() if ids is not None else None,
+                batch_size
+            )
+        # sequences = sequences.cpu().numpy()
+        # costs = costs.cpu().numpy()
+
 
         duration = time.time() - start
         for seq, cost in zip(sequences, costs):
@@ -167,5 +209,3 @@ def eval(opts):
 
 if __name__ == "__main__":
     eval(get_eval_options())
-
-    
