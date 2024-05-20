@@ -55,7 +55,7 @@ def clear_checkpoint_optimizer_states(dir="outputs"):
             logger.success(f"!! clear {run}")
 
 
-def copy_trained_nets(from_dir, to_dir, epoches=None):
+def copy_trained_nets(from_dir, to_dir, epoches=None, default_epoch="best"):
     """
     copy the trained nets from from_dir to to_dir
     """
@@ -114,8 +114,12 @@ def copy_trained_nets(from_dir, to_dir, epoches=None):
             # copy epoch-xx.pt to to_dir
             model = torch.load(epoch_path)
             model_small = {"model": model["model"], "epoch": model.get("epoch", epoch)}
-            torch.save(model_small, os.path.join(to_dir, epoch_fn))
-            logger.success(f"copy {epoch_fn} success")
+            epoch_fn = f"epoch-{model_small['epoch']}.pt"   # always use the epoch in the model
+            if not os.path.exists(os.path.join(to_dir, epoch_fn)):
+                torch.save(model_small, os.path.join(to_dir, epoch_fn))
+                logger.success(f"copy {epoch_fn} success")
+            else:
+                logger.info(f"{epoch_fn} exists")
     logger.success(f"copy {from_dir} to {to_dir}")
     
     return
