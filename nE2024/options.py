@@ -197,7 +197,7 @@ def get_options(args=None):
 
     if opts.shpp:
         opts.force_steps = 2
-    elif opts.pomo_sample > 1:
+    elif (opts.pomo_sample > 1) and (opts.baseline == "pomo"):
         opts.force_steps = 1
     else:
         opts.force_steps = 0
