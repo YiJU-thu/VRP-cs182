@@ -8,10 +8,12 @@ from torchvision.ops import MLP
 import math
 
 from nets.init_embed import InitEncoder
+from utils.tensor_functions import gather_node_features, recover_full_edge_mat
 
 from loguru import logger
 
 # NOTE: a lot are shared with gat encoder, consider refactoring later
+# FIXME: adj_mat is only used as feature, but not to determine the conveolutional structure 
 
 class GCNEncoder(nn.Module):
 
@@ -37,6 +39,8 @@ class GCNEncoder(nn.Module):
                  edge_embedding_dim=None,
                  adj_mat_embedding_dim=None,
                  kNN=20,
+                 no_coords=False,
+                 random_node_dim=0
                  ):
         super(GCNEncoder, self).__init__()
 
@@ -80,9 +84,11 @@ class GCNEncoder(nn.Module):
             mul_sigma_uv=mul_sigma_uv,
             full_svd=full_svd,
             only_distance=only_distance,
-            edge_embedding_dim=embedding_dim//2,
-            adj_mat_embedding_dim=embedding_dim//2,
+            edge_embedding_dim=(embedding_dim if edge_embedding_dim is None else edge_embedding_dim),
+            # adj_mat_embedding_dim=embedding_dim//2,
             kNN=kNN,
+            no_coords=no_coords,
+            random_node_dim=random_node_dim
         )
 
         self.embedder = ResidualGatedGCNModel(
@@ -126,7 +132,7 @@ class GCNEncoder(nn.Module):
             
             # if self.encoder_only: return u_mat
             # else: return (embeddings, graph_embed)
-            return self.embedder(init_embed, edge_embed, S, scale_factors=scale_factors)
+            return self.embedder(init_embed, edge_embed, S, scale_factors=scale_factors, adj_idx=input['adj_idx'])
 
 
 class ResidualGatedGCNModel(nn.Module):
@@ -169,10 +175,14 @@ class ResidualGatedGCNModel(nn.Module):
         
         if not return_u_mat:
             if add_graph_dim > 0:
-                self.graph_embed = MLP(embed_dim+add_graph_dim, [embed_dim for _ in range(aug_graph_embed_layers)])
+                dim = embed_dim+add_graph_dim
+                self.graph_embed = MLP(dim, [2*dim for _ in range(aug_graph_embed_layers)])
         else:
-            self.u_mat_embed = MLP(embed_dim+add_graph_dim, [embed_dim for _ in range(umat_embed_layers)]+[1])
-        
+            dim = embed_dim+add_graph_dim
+            # e.g., dim = 128, umat_embed_layers = 3: 128 -> 64 -> 32 -> 16 -> 1
+            self.u_mat_embed = MLP(dim, [dim // (2**(i+1)) for i in range(umat_embed_layers)]+[1])
+            # self.u_mat_embed = MLP(embed_dim+add_graph_dim, [embed_dim for _ in range(umat_embed_layers)]+[1]) # this will increase huge memory usage!
+
         
         # self.dtypeFloat = dtypeFloat
         # self.dtypeLong = dtypeLong
@@ -200,7 +210,7 @@ class ResidualGatedGCNModel(nn.Module):
         # self.mlp_edges = MLP(self.hidden_dim, self.voc_edges_out, self.mlp_layers)
         # # self.mlp_nodes = MLP(self.hidden_dim, self.voc_nodes_out, self.mlp_layers)
 
-    def forward(self, x, e, S, scale_factors=None, mask=None):
+    def forward(self, x, e, S, scale_factors=None, mask=None, adj_idx=None):
         """
         Args:
             x: initial node embeddings (batch_size, num_nodes, embed_dim)
@@ -231,20 +241,30 @@ class ResidualGatedGCNModel(nn.Module):
         
         # # permute kaibin QIU
         # # FIXME: do we need to permute?
+
+        B, V, H = x.size()
+        _, _, K, _ = e.size()
+
+
         x = x.permute(0, 2, 1) # B x H x V
-        e = e.permute(0, 3, 1, 2) # B x H x V x V
+        e = e.permute(0, 3, 1, 2) # B x H x V x K (K = self.kNN)
         
         # GCN layers
         for l in range(len(self.layers)):
-            x, e = self.layers[l](x, e)  # B x V x H, B x V x V x H
+            # logger.debug(f"Layer {l}: x={x.size()}, e={e.size()}")
+            x, e = self.layers[l](x, e, adj_idx)  # B x V x H, B x V x V x H
         
-        h = x.permute(0,2,1) if not self.return_u_mat else e.permute(0,2,3,1)
+        if not self.return_u_mat:
+            h = x.permute(0,2,1) # node features
+            assert h.size() == (B, V, H), f"{h.size()} != [{B}, {V}, {H}]"
+        else:
+            h = e.permute(0,2,3,1)
+            assert h.size() == (B, V, K, H), f"{h.size()} != [{B}, {V}, {K}, {H}]"
         
         if self.add_graph_dim > 0:
             S = S if S is not None else torch.zeros(h.size(0), 0, device=h.device)
             scale_factors = scale_factors if self.rescale_dist else torch.zeros(h.size(0), 0, device=h.device)
 
-        
         if not self.return_u_mat:
             # the embedding of the graph is the concatenation of the average of h, the first k singular values
             # (and scale_dist if rescale_dist is True) going through a linear layer
@@ -267,7 +287,7 @@ class ResidualGatedGCNModel(nn.Module):
             # (n_heads, I, N, N) -> (I, N, N, n_heads)
             # u_mat = h.permute(1, 2, 3, 0)
             u_mat = h
-            I, N, _, embed_dim = u_mat.size()
+            I, N, K, embed_dim = u_mat.size()
             # (I, N, N, n_heads) -> (I, N, N, n_heads+add_graph_dim)
             if self.add_graph_dim > 0:
                 graph_features = torch.cat([S, scale_factors], dim=1)
@@ -277,7 +297,8 @@ class ResidualGatedGCNModel(nn.Module):
                 u_mat = torch.cat([u_mat, graph_features], dim=3)
 
             u_mat = self.u_mat_embed(u_mat.view(-1, u_mat.size(-1))).view(*u_mat.size()[:3], -1).squeeze(-1)
-            assert u_mat.size() == (I,N,N), f"{u_mat.size()} != [{I}, {N}, {N}]"
+            assert u_mat.size() == (I,N,K), f"{u_mat.size()} != [{I}, {N}, {K}]"
+            u_mat = recover_full_edge_mat(u_mat, adj_idx)
             return {"heatmap": u_mat}
         
         
@@ -365,8 +386,8 @@ class NodeFeatures(nn.Module):
         """
         Ux = self.U(x)  # B x H x V
         Vx = self.V(x)  # B x H x V
-        Vx = Vx.unsqueeze(2)  # extend Vx from "B x H x V" to "B x H x 1 x V"
-        gateVx = edge_gate * Vx  # B x H x V x V
+        Vx = Vx.unsqueeze(3)  # extend Vx from "B x H x V" to "B x H x V x 1"
+        gateVx = edge_gate * Vx  # B x H x V x K
         if self.aggregation=="mean":
             x_new = Ux + torch.sum(gateVx, dim=3) / (1e-20 + torch.sum(edge_gate, dim=3))  # B x H x V
         elif self.aggregation=="sum":
@@ -385,7 +406,7 @@ class EdgeFeatures(nn.Module):
         self.U = nn.Conv2d(hidden_dim, hidden_dim, (1,1))
         self.V = nn.Conv1d(hidden_dim, hidden_dim, 1)
         
-    def forward(self, x, e):
+    def forward(self, x, e, adj_idx=None):
         """
         Args:
             x: Node features (batch_size, num_nodes, hidden_dim)
@@ -394,10 +415,14 @@ class EdgeFeatures(nn.Module):
         Returns:
             e_new: Convolved edge features (batch_size, num_nodes, num_nodes, hidden_dim)
         """
-        Ue = self.U(e) # B x H x V x V
+        Ue = self.U(e) # B x H x V x K
         Vx = self.V(x) # B x H x V
-        Wx = Vx.unsqueeze(2)  # Extend Vx from "B x H x V" to "B x H x 1 x V"
-        Vx = Vx.unsqueeze(3)  # extend Vx from "B x H x V" to "B x H x V x 1"
+        Wx = Vx.unsqueeze(3)  # Extend Vx from "B x H x V" to "B x H x V x 1"
+        if adj_idx is not None:
+            Vx = gather_node_features(Vx, adj_idx)  # extend Vx from "B x H x V" to "B x H x V x K"
+            assert Vx.size() == Ue.size(), f"{Vx.size()} != {Ue.size()}"
+        else:
+            Vx = Vx.unsqueeze(2)  # Extend Vx from "B x H x V" to "B x H x 1 x V"
         e_new = Ue + Vx + Wx
         return e_new
 
@@ -406,14 +431,14 @@ class ResidualGatedGCNLayer(nn.Module):
     """Convnet layer with gating and residual connection.
     """
 
-    def __init__(self, hidden_dim, aggregation="sum"):
+    def __init__(self, hidden_dim, adj_idx, aggregation="sum"):
         super(ResidualGatedGCNLayer, self).__init__()
         self.node_feat = NodeFeatures(hidden_dim, aggregation)
         self.edge_feat = EdgeFeatures(hidden_dim)
         self.bn_node = BatchNormNode(hidden_dim)
         self.bn_edge = BatchNormEdge(hidden_dim)
 
-    def forward(self, x, e):
+    def forward(self, x, e, adj_idx=None):
         """
         Args:
             x: Node features (batch_size, hidden_dim, num_nodes)
@@ -426,7 +451,7 @@ class ResidualGatedGCNLayer(nn.Module):
         e_in = e # B x H x V x V
         x_in = x # B x H x V
         # Edge convolution
-        e_tmp = self.edge_feat(x_in, e_in)  # B x H x V x V
+        e_tmp = self.edge_feat(x_in, e_in, adj_idx=adj_idx)  # B x H x V x V
         # Compute edge gates
         edge_gate = F.sigmoid(e_tmp)
         # Node convolution

@@ -20,7 +20,7 @@ class InitEncoder(nn.Module):
                  only_distance=False,
                  no_coords=False,
                  edge_embedding_dim=None,
-                 adj_mat_embedding_dim=None,
+                #  adj_mat_embedding_dim=None,
                  kNN=-1,
                  random_node_dim=0
                  ):
@@ -50,7 +50,8 @@ class InitEncoder(nn.Module):
             assert (rank_k_approx > 0 or random_node_dim > 0)
         
         self.embed_edge = (edge_embedding_dim is not None)
-        self.embed_adj_mat = (adj_mat_embedding_dim is not None)
+        self.edge_embedding_dim = edge_embedding_dim
+        # self.embed_adj_mat = (adj_mat_embedding_dim is not None)
         self.kNN = kNN
 
         # assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
@@ -86,9 +87,9 @@ class InitEncoder(nn.Module):
 
         if edge_embedding_dim is not None:
             self.edge_val_embed = nn.Linear(1, edge_embedding_dim)
-        if adj_mat_embedding_dim is not None:
-            assert kNN != -1, "kNN < n, otherwise all 1 matrix"
-            self.edge_adj_embed = nn.Embedding(2, adj_mat_embedding_dim)    # class 0, 1
+        # if adj_mat_embedding_dim is not None:
+        #     assert kNN != -1, "kNN < n, otherwise all 1 matrix"
+        #     self.edge_adj_embed = nn.Embedding(2, adj_mat_embedding_dim)    # class 0, 1
 
 
 
@@ -128,13 +129,24 @@ class InitEncoder(nn.Module):
         if not self.embed_edge:
             return x, S
         else:
-            edge_val_embed = self.edge_val_embed(input['distance'][:, :, :, None])
-            if self.embed_adj_mat:
-                adj_mat = knn_adjacency_torch(input['distance'], self.kNN)
-                edge_adj_embed = self.edge_adj_embed(adj_mat)
-                e = torch.cat([edge_val_embed, edge_adj_embed], dim=-1)
+            
+            if self.kNN != -1:
+                assert self.kNN < N, "kNN < n, otherwise all 1 matrix"
+                if "adj_idx" not in input:
+                    # for POMO, etc., it is more efficient to compute adj_idx in advance
+                    input["adj_idx"] = knn_adjacency_torch(input['distance'], self.kNN, return_expand=False)
+                dist_topk = input['distance'].gather(-1, input['adj_idx'])
+                e = self.edge_val_embed(dist_topk[:,:,:,None])
+                assert e.shape == (I, N, self.kNN, self.edge_embedding_dim), "e.shape is {}".format(e.shape)
             else:
-                e = edge_val_embed
+                e = self.edge_val_embed(input['distance'][:, :, :, None])
+                assert e.shape == (I, N, N, self.edge_embedding_dim), "e.shape is {}".format(e.shape)
+            # if self.embed_adj_mat:
+            #     adj_mat = knn_adjacency_torch(input['distance'], self.kNN)
+            #     edge_adj_embed = self.edge_adj_embed(adj_mat)
+            #     e = torch.cat([edge_val_embed, edge_adj_embed], dim=-1)
+            # else:
+            
             return x, e, S
 
 
