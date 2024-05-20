@@ -48,7 +48,7 @@ def get_options(args=None):
     parser.add_argument('--full_svd', action='store_true', help='if not, use randomized algorithm to perform faster SVD')
     parser.add_argument('--mul_sigma_uv', action='store_true', help='if True, add sqrt(sigma) u, sqrt(sigma) v to the node features')
     parser.add_argument('--only_distance', action='store_true', help='if True, do not use coordinates in the model') # compatible with rank_k_approx > 0 & svd_original_edge = True
-    parser.add_argument('--return_heatmap', action='store_true', help='if True, return the heatmap instead of embeddings (Decoder use nAR)')
+    # parser.add_argument('--return_heatmap', action='store_true', help='if True, return the heatmap instead of embeddings (Decoder use nAR)')
     parser.add_argument('--umat_embed_layers', type=int, default=3, help='number of MLP hidden layers for umat embedding')
     parser.add_argument('--aug_graph_embed_layers', type=int, default=3, help='number of MLP hidden layers for augmented graph embedding')
     parser.add_argument('--rescale_dist', action='store_true', help='if rand_dist is not standard, whether to rescale it to standard')
@@ -152,17 +152,24 @@ def get_options(args=None):
             setattr(opts, k, None)
 
 
+    if opts.decoder == 'gat':
+        opts.return_heatmap = False
+    elif opts.decoder == 'nAR':
+        opts.return_heatmap = True
+    else:
+        raise NotImplementedError
+    
     if opts.encoder == 'gat':
         opts.encoder_kwargs = {k: v for k, v in vars(opts).items() if k in gat_encoder_kws}
     elif opts.encoder == 'gcn':
         opts.encoder_kwargs = {k: v for k, v in vars(opts).items() if k in gcn_encoder_kws}
+    else:
+        raise NotImplementedError
     
     if opts.decoder == 'gat':
         opts.decoder_kwargs = {k: v for k, v in vars(opts).items() if k in gat_decoder_kws}
-        assert opts.return_heatmap == False, "heatmap is only used in nAR decoder"
     elif opts.decoder == 'nAR':
         opts.decoder_kwargs = {k: v for k, v in vars(opts).items() if k in nAR_decoder_kws}
-        assert opts.return_heatmap == True, "heatmap is only used in nAR decoder"
     else:
         raise NotImplementedError
 
