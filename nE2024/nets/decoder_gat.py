@@ -11,6 +11,7 @@ from utils.functions import sample_many
 
 from loguru import logger
 
+# FIXME: can be moved elewhere?
 def set_decode_type(model, decode_type):
     if isinstance(model, DataParallel):
         model = model.module
@@ -113,18 +114,23 @@ class AttentionDecoder(nn.Module):
         if temp is not None:  # Do not change temperature if not provided
             self.temp = temp
 
-    def forward(self, input, embeddings, graph_embed=None, force_steps=0, return_pi=False):
+    def forward(self, input, embeddings, graph_embed=None, force_steps=0, return_pi=False, ref_pi=None):
         """
         :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
         :param return_pi: whether to return the output sequences, this is optional as it is not compatible with
         using DataParallel as the results may be of different lengths on different GPUs
+        :param ref_pi: reference sequence to calculate the log likelihood
         :return:
         """
 
-        _log_p, pi = self._inner(input, embeddings, graph_embed=graph_embed, force_steps=force_steps)
+        _log_p, pi = self._inner(input, embeddings, graph_embed=graph_embed, force_steps=force_steps, ref_pi=ref_pi)
 
         for i in range(force_steps):
-            assert pi[:, i].eq(i).all(), "Forced output incorrect"
+            if self.problem.NAME == 'tsp':
+                assert pi[:, i].eq(i).all(), "Forced output incorrect"
+            elif self.problem.NAME == 'cvrp':
+                assert i == 0
+                assert pi[:, i].eq(i+1).all(), "Forced output incorrect"
         
         cost, mask = self.problem.get_costs(input, pi)
         # Log likelyhood is calculated within the model since returning it per action does not work well with
@@ -199,7 +205,7 @@ class AttentionDecoder(nn.Module):
         return log_p.sum(1)
 
  
-    def _inner(self, input, embeddings, graph_embed=None, force_steps=0):
+    def _inner(self, input, embeddings, graph_embed=None, force_steps=0, ref_pi=None):
 
         outputs = []
         sequences = []
@@ -214,6 +220,9 @@ class AttentionDecoder(nn.Module):
 
         # Perform decoding steps
         i = 0
+
+        if ref_pi is not None:
+            ref_pi.shape == embeddings.shape[0], embeddings.shape[1]    # FIXME: we may pass a partial tour as ref_pi later
 
         while not (self.shrink_size is None and state.all_finished()):
 
@@ -234,11 +243,20 @@ class AttentionDecoder(nn.Module):
                 glimpse = None
             log_p, mask, glimpse = self._get_log_p(fixed, state, glimpse)
             
-            if i >= force_steps:
+            if ref_pi is not None:
+                selected = ref_pi[:, i]
+
+            elif i >= force_steps:  # FIXME: force_steps can be unified as ref_pi (but a partial tour, e.g., only the first step)
                 # Select the indices of the next nodes in the sequences, result (batch_size) long
                 selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
             else:
-                selected = torch.tensor([i]*batch_size, device=log_p.device)
+                if self.problem.NAME == 'tsp':
+                    selected = torch.tensor([i]*batch_size, device=log_p.device)
+                elif self.problem.NAME == 'cvrp':
+                    assert i == 0, "For CVRP, force_steps should be at most 1 (POMO)"
+                    selected = torch.tensor([1]*batch_size, device=log_p.device)    # node 0 is depot and already be taken!
+                else:
+                    raise NotImplementedError("force_steps is not implemented for {}".format(self.problem.NAME))
                 # NOTE: SHPP: 0 -> 1 -> xxx
                 # so when use SHPP mode to solve SHPP, let terminal=0, start=1
 

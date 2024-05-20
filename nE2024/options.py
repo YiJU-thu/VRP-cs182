@@ -4,6 +4,7 @@ import argparse
 import torch
 from utils.functions import parse_softmax_temperature
 
+from loguru import logger
 
 def get_options(args=None):
     parser = argparse.ArgumentParser(
@@ -12,6 +13,7 @@ def get_options(args=None):
     # [Data]
     parser.add_argument('--problem', default='tsp', help="The problem to solve, default 'tsp'")
     parser.add_argument('--non_Euc', action='store_true', help="Whether the problem is non-Euclidean. If the case, both coords and distance matrix will be provided")
+    parser.add_argument('--no_coords', action='store_true', help="Whether to use coordinates in the model")
     parser.add_argument('--graph_size', type=int, default=20, help="The size of the problem graph")
     parser.add_argument('--batch_size', type=int, default=512, help='Number of instances per batch during training')
     parser.add_argument('--batch_per_epoch', type=int, default=2000, help='Number of batches per epoch during training')
@@ -20,16 +22,16 @@ def get_options(args=None):
                         help='Number of instances used for reporting validation performance')
     parser.add_argument('--val_dataset', type=str, default=None, help='Dataset file to use for validation')
     parser.add_argument('--rand_dist', type=str, default='standard', help='"standard" or "complex"') # FIXME: can be combined with data_distribution
-    
+    parser.add_argument('--force_triangle_iter', type=int, default=2, help='run triangle inequality violation elimination for this many iterations')
     
     # [Model]
     parser.add_argument('--encoder', default='gat', help="Encoder name, 'gat' (default) or 'gcn'")
     parser.add_argument('--decoder', default='gat', help="Decoder name, 'gat' (default) or 'nAR'")
 
     # GAT encoder kwargs
-    init_encoder_kws = ["embedding_dim", "hidden_dim", "problem", "non_Euc", 
-                       "rank_k_approx", "svd_original_edge", "mul_sigma_uv", "full_svd", "only_distance"]
-    gat_encoder_kws = init_encoder_kws + ["n_edge_encode_layers", "encode_original_edge", "rescale_dist", "n_encode_layers", 
+    gat_init_encoder_kws = ["embedding_dim", "hidden_dim", "problem", "non_Euc", 
+                       "rank_k_approx", "svd_original_edge", "mul_sigma_uv", "full_svd", "only_distance", "no_coords", "random_node_dim"]
+    gat_encoder_kws = gat_init_encoder_kws + ["n_edge_encode_layers", "encode_original_edge", "matnet_mix_score", "rescale_dist", "n_encode_layers", 
                        "normalization", "n_heads", "checkpoint_encoder", "return_heatmap", "umat_embed_layers", "aug_graph_embed_layers"]
 
     parser.add_argument('--embedding_dim', type=int, default=128, help='Dimension of input embedding')
@@ -41,20 +43,29 @@ def get_options(args=None):
     parser.add_argument('--rank_k_approx', type=int, default=0, help='compute rank k-approx of dist matrix to argument node features')
     parser.add_argument('--n_edge_encode_layers', type=int, default=0, help='add edge matrix encodings to the first n attention layers')
     parser.add_argument('--encode_original_edge', action='store_true', help='if not, encode the relative distance matrix')
+    parser.add_argument('--matnet_mix_score', action='store_true', help='if True, use the mixing mathod as MatNet. Otherwise, use the "our" method')
     parser.add_argument('--svd_original_edge', action='store_true', help='if not, do SVD on the relative distance matrix')
     parser.add_argument('--full_svd', action='store_true', help='if not, use randomized algorithm to perform faster SVD')
     parser.add_argument('--mul_sigma_uv', action='store_true', help='if True, add sqrt(sigma) u, sqrt(sigma) v to the node features')
     parser.add_argument('--only_distance', action='store_true', help='if True, do not use coordinates in the model') # compatible with rank_k_approx > 0 & svd_original_edge = True
-    parser.add_argument('--return_heatmap', action='store_true', help='if True, return the heatmap instead of embeddings (Decoder use nAR)')
+    # parser.add_argument('--return_heatmap', action='store_true', help='if True, return the heatmap instead of embeddings (Decoder use nAR)')
     parser.add_argument('--umat_embed_layers', type=int, default=3, help='number of MLP hidden layers for umat embedding')
     parser.add_argument('--aug_graph_embed_layers', type=int, default=3, help='number of MLP hidden layers for augmented graph embedding')
     parser.add_argument('--rescale_dist', action='store_true', help='if rand_dist is not standard, whether to rescale it to standard')
+    parser.add_argument('--random_node_dim', type=int, default=0, help='randomly generate initial node features of this dimension in U(0,1)')
     parser.add_argument('--checkpoint_encoder', action='store_true',
                         help='Set to decrease memory usage by checkpointing encoder')
 
     
     # GCN encoder kwargs
-    # TODO
+    gcn_init_encoder_kws = gat_init_encoder_kws + ["edge_embedding_dim", "adj_mat_embedding_dim", "kNN"]
+    gcn_encoder_kws = gcn_init_encoder_kws + ["encode_original_edge", "rescale_dist", "n_encode_layers", "normalization", 
+                                              "checkpoint_encoder", "return_heatmap", "umat_embed_layers", "aug_graph_embed_layers", "gcn_aggregation"]
+    parser.add_argument('--edge_embedding_dim', type=int, default=None, help='Dimension of edge embedding')
+    parser.add_argument('--adj_mat_embedding_dim', type=int, default=None, help='Dimension of adjacency matrix embedding')
+    parser.add_argument('--kNN', type=int, default=20, help='Number of nearest neighbors to consider in the adjacency matrix')
+    parser.add_argument('--gcn_aggregation', default='sum', help="Aggregation type, 'mean' or 'sum' (default)")
+    
     
     # GAT decoder kwargs 
     gat_decoder_kws = ["embedding_dim", "problem", "update_context_node", "tanh_clipping", "mask_inner", "mask_logits", "n_heads", "shrink_size"]
@@ -77,6 +88,16 @@ def get_options(args=None):
 
 
     # [Training]
+    parser.add_argument('--learning_scheme', default='RL', help='Learning scheme: valid: RL, SL, USL')
+    # SL only
+    parser.add_argument('--tot_samples', type=int, default=None, help='Total number of samples for training')
+    parser.add_argument('--augmentation', type=str, default='none', help='Data augmentation method. Options: none, flip, rotate, roll, or any combo. linked w/ "_"')
+    parser.add_argument('--n_aug', type=int, default=1, help='Number of augmentations per sample.')
+    parser.add_argument('--n_loaded_files', type=int, default=10, help='Number of files loaded at once')
+    parser.add_argument('--start_file_idx', type=int, default=0, help='Index of the first file to load')
+    parser.add_argument('--sl_debug', action='store_true', help='Debug mode for SL (use local files)')
+    parser.add_argument('--ul_loss_c1', type=float, default=10, help='Coefficient for penalty on column sum')
+
     parser.add_argument('--optimizer', default='adam', help="Optimizer to use, 'adam' (default) or 'adamW'")
     parser.add_argument('--lr_model', type=float, default=1e-4, help="Set the learning rate for the actor network")
     parser.add_argument('--lr_critic', type=float, default=1e-4, help="Set the learning rate for the critic network")
@@ -84,7 +105,7 @@ def get_options(args=None):
     parser.add_argument('--weight_decay_model', type=float, default=0, help='Weight decay (L2 penalty) for the actor network')
     parser.add_argument('--weight_decay_critic', type=float, default=0, help='Weight decay (L2 penalty) for the critic network')
     parser.add_argument('--eval_only', action='store_true', help='Set this value to only evaluate model')
-    parser.add_argument('--n_epochs', type=int, default=300, help='The number of epochs to train')
+    parser.add_argument('--n_epochs', type=int, default=1000, help='The number of epochs to train')
     parser.add_argument('--seed', type=int, default=1234, help='Random seed to use')
     parser.add_argument('--max_grad_norm', type=float, default=1.0,
                         help='Maximum L2 norm for gradient clipping, default 1.0 (0 to disable clipping)')
@@ -100,6 +121,7 @@ def get_options(args=None):
                              'used for warmup phase), 0 otherwise. Can only be used with rollout baseline.')
     parser.add_argument('--eval_batch_size', type=int, default=1024,
                         help="Batch size to use during (baseline) evaluation")
+    parser.add_argument('--val_beam_size', type=int, default=100, help='Beam size to use in evaluation after each epoch')
     parser.add_argument('--data_distribution', type=str, default=None,
                         help='Data distribution to use during training, defaults and options depend on problem.')
     parser.add_argument('--best_val', type=float, default=None, help='Best validation score so far')
@@ -124,18 +146,30 @@ def get_options(args=None):
 
 
     opts = parser.parse_args(args)
+    # replace "none", "None", "NONE" with None
+    for k, v in vars(opts).items():
+        if v in ["none", "None", "NONE"]:
+            setattr(opts, k, None)
 
+
+    if opts.decoder == 'gat':
+        opts.return_heatmap = False
+    elif opts.decoder == 'nAR':
+        opts.return_heatmap = True
+    else:
+        raise NotImplementedError
+    
     if opts.encoder == 'gat':
         opts.encoder_kwargs = {k: v for k, v in vars(opts).items() if k in gat_encoder_kws}
+    elif opts.encoder == 'gcn':
+        opts.encoder_kwargs = {k: v for k, v in vars(opts).items() if k in gcn_encoder_kws}
     else:
         raise NotImplementedError
     
     if opts.decoder == 'gat':
         opts.decoder_kwargs = {k: v for k, v in vars(opts).items() if k in gat_decoder_kws}
-        assert opts.return_heatmap == False, "heatmap is only used in nAR decoder"
     elif opts.decoder == 'nAR':
         opts.decoder_kwargs = {k: v for k, v in vars(opts).items() if k in nAR_decoder_kws}
-        assert opts.return_heatmap == True, "heatmap is only used in nAR decoder"
     else:
         raise NotImplementedError
 
@@ -170,13 +204,53 @@ def get_options(args=None):
 
     if opts.shpp:
         opts.force_steps = 2
-    elif opts.pomo_sample > 1:
+    elif (opts.pomo_sample > 1) and (opts.baseline == "pomo"):
         opts.force_steps = 1
     else:
         opts.force_steps = 0
     opts.force_steps_batch = opts.force_steps
     
     
+    if opts.learning_scheme == 'SL':
+        curr_dir = os.path.dirname(os.path.realpath(__file__))
+        assert opts.baseline is None
+        
+        # find the dataset
+        if opts.sl_debug:
+            dir = os.path.join(curr_dir, '../dataset/nE2024_data/test')
+            instance_per_file = 5000
+            fns = [f"rnd_N100_I5000_S_seed{i}_iter4_NoTrack.pkl" for i in range(2)]
+            filenames = {
+                os.path.join(dir, fns[i]): os.path.join(dir, "CCD_"+fns[i]) for i in range(2)
+            }
+        else:
+            dir = os.path.join(curr_dir, '../dataset/nE2024_data/SL_100')
+            instance_per_file = 10000
+            fns = [f"rnd_N100_I10000_S_seed{i+100:03d}_iter4_NoTrack.pkl" for i in range(100)]
+            filenames = {
+                os.path.join(dir, f"SL_{i//10:03d}", fns[i]): os.path.join(dir, f"SL_{i//10:03d}", "LKH_"+fns[i]) for i in range(100)
+            }
+        fns = list(filenames.keys())
+        
+        if opts.tot_samples is not None:
+            n_files = opts.tot_samples // instance_per_file
+            if n_files > len(fns):
+                raise ValueError("Not enough files for the given tot_samples")
+            else:
+                fns = fns[:n_files]
+                filenames = {k: filenames[k] for k in fns}
+        opts.sl_filenames = filenames
+
+    if opts.learning_scheme == 'USL':
+        assert opts.decoder == 'nAR', "USL only supports nAR decoder"
+        assert opts.baseline is None, "USL only supports no baseline"
+
+    opts.keep_rel = False
+    if (opts.encode_original_edge == False) and (opts.n_edge_encode_layers > 0):
+        opts.keep_rel = True
+    if (opts.svd_original_edge == False) and (opts.rank_k_approx > 0):
+        opts.keep_rel = True
+
     return opts
 
 

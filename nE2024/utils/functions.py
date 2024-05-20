@@ -1,6 +1,7 @@
 import warnings
 
 import torch
+import math
 import numpy as np
 import os
 import json
@@ -10,6 +11,28 @@ from multiprocessing import Pool
 import torch.nn.functional as F
 
 from loguru import logger
+import pynvml
+
+
+def gpu_memory_usage(msg=""):
+    """Get the current GPU memory usage."""
+    return
+    if not torch.cuda.is_available():
+        return  # No GPU
+    device_count = torch.cuda.device_count()
+    memory_info = []
+    for i in range(device_count):
+        free_memory, total_memory = torch.cuda.mem_get_info(i)
+        memory_info.append([free_memory, total_memory])
+    gBytes = 1024**3
+    logger.debug(f"{msg} || Number of GPUs: {device_count}")
+    for i, info in enumerate(memory_info):
+        free, tot = info
+        used = tot - free
+        logger.debug(f"GPU Memory {i}: Total: {tot/gBytes:.2f} | Free: {free/gBytes:.2f} | Used: {used/gBytes:.2f} Gb")
+    
+
+
 
 def load_problem(name):
     from problems import TSP, CVRP, SDVRP, OP, PCTSPDet, PCTSPStoch
@@ -175,7 +198,7 @@ def do_batch_rep(v, n):
     return v[None, ...].expand(n, *v.size()).contiguous().view(-1, *v.size()[1:])
 
 
-def sample_many(decoder, input, embed, batch_rep=1, iter_rep=1):
+def sample_many(decoder, input, embed, batch_rep=1, iter_rep=1, return_best=True):
     """
     NOTE: this method has been modified compared with AM2019
     :param input: (batch_size, graph_size, node_dim) input node features
@@ -205,4 +228,31 @@ def sample_many(decoder, input, embed, batch_rep=1, iter_rep=1):
     # (batch_size, minlength)
     minpis = pis[torch.arange(pis.size(0), out=argmincosts.new()), argmincosts]
 
-    return minpis, mincosts
+    if not return_best:
+        return minpis, mincosts
+    batch_size = minpis.size(0)
+    return get_best(minpis.cpu().numpy(), mincosts.cpu().numpy(), ids=np.arange(batch_size), batch_size=batch_size)
+
+
+def get_best(sequences, cost, ids=None, batch_size=None):
+    """
+    Ids contains [0, 0, 0, 1, 1, 2, ..., n, n, n] if 3 solutions found for 0th instance, 2 for 1st, etc
+    :param sequences:
+    :param lengths:
+    :param ids:
+    :return: list with n sequences and list with n lengths of solutions
+    """
+    if ids is None:
+        idx = cost.argmin()
+        return sequences[idx:idx+1, ...], cost[idx:idx+1, ...]
+
+    splits = np.hstack([0, np.where(ids[:-1] != ids[1:])[0] + 1])
+    mincosts = np.minimum.reduceat(cost, splits)
+
+    group_lengths = np.diff(np.hstack([splits, len(ids)]))
+    all_argmin = np.flatnonzero(np.repeat(mincosts, group_lengths) == cost)
+    result = np.full(len(group_lengths) if batch_size is None else batch_size, -1, dtype=int)
+
+    result[ids[all_argmin[::-1]]] = all_argmin[::-1]
+
+    return [sequences[i] if i >= 0 else None for i in result], [cost[i] if i >= 0 else math.inf for i in result]

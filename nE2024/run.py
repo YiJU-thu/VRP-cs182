@@ -7,6 +7,7 @@ import pprint as pp
 import torch
 import torch.optim as optim
 from tensorboard_logger import Logger as TbLogger
+# from torchsummary import summary
 
 # from nets.critic_network import CriticNetwork
 from options import get_options
@@ -18,6 +19,7 @@ from reinforce_baselines import NoBaseline, ExponentialBaseline, CriticBaseline,
 from nets.encoder_decoder import VRPModel
 
 from utils import torch_load_cpu, load_problem
+from utils.vrp_dataset import VRPDataset, VRPLargeDataset
 
 from loguru import logger
 
@@ -89,12 +91,26 @@ def run(opts):
     ).to(opts.device)
 
     if opts.use_cuda and torch.cuda.device_count() > 1:
+        logger.info(f"Using {torch.cuda.device_count()} GPUs!")
         # model = torch.nn.parallel.DistributedDataParallel(model)
         model = torch.nn.DataParallel(model)
 
     # Overwrite model parameters by parameters to load
     model_ = get_inner_model(model)
     model_.load_state_dict({**model_.state_dict(), **load_data.get('model', {})})
+
+    # print model summary
+    logger.info(model)
+    logger.info(f"TOTAL PARAMS: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+
+    # save model summary to txt file
+    with open(os.path.join(opts.save_dir, "model_summary.txt"), "w") as f:
+        f.write(str(model))
+        f.write(f"\n\nPARAMS: {[p.numel() for p in model.parameters() if p.requires_grad]}")
+        f.write(f"\n\nTOTAL PARAMS: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+    logger.info(f"Model summary saved")
+
+
 
     # Initialize baseline
     if opts.baseline == 'exponential':
@@ -164,7 +180,8 @@ def run(opts):
     with torch.device("cpu"): # make sure the dataset is on CPU
         val_dataset = problem.make_dataset(
             size=opts.graph_size, num_samples=opts.val_size, filename=opts.val_dataset, normalize_loaded=False, # if load from file, do not (repeatedly) normalize
-            non_Euc=opts.non_Euc, rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution)
+            non_Euc=opts.non_Euc, rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution, 
+            no_coords=opts.no_coords, keep_rel=opts.keep_rel, force_triangle_iter=4)
 
     if opts.resume:
         epoch_resume = load_data.get('epoch')
@@ -183,9 +200,17 @@ def run(opts):
     if opts.eval_only:
         validate(model, val_dataset, opts)
     else:
+        if opts.learning_scheme == "SL":
+            with torch.device("cpu"):
+                dataloader = VRPLargeDataset(filenames=opts.sl_filenames, batch_size=opts.batch_size, n_loaded_files=opts.n_loaded_files, start_file_idx=opts.start_file_idx, 
+                                            shuffle=True, augmentation=opts.augmentation, n_aug=opts.n_aug)
+            dataloader = iter(dataloader)
+        else:
+            dataloader = None
         for epoch in range(opts.epoch_start, opts.epoch_start + opts.n_epochs):
             train_epoch(
                 model,
+                dataloader,
                 optimizer,
                 baseline,
                 lr_scheduler,

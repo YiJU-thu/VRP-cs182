@@ -11,7 +11,7 @@ utils_vrp_path = os.path.join(curr_path, '..', '..', '..', 'utils_project')
 if utils_vrp_path not in sys.path:
     sys.path.append(utils_vrp_path)
 from utils_vrp import get_random_graph, normalize_graph, recover_graph,\
-      get_tour_len_torch, to_torch
+      get_tour_len_torch, to_torch, get_rel_dist_mat_batch
 
 class TSP(object):
 
@@ -21,7 +21,7 @@ class TSP(object):
     def get_costs(dataset, pi):
         # Check that tours are valid, i.e. contain 0 to n -1
         assert (
-            torch.arange(pi.size(1), out=pi.data.new()).view(1, -1).expand_as(pi) ==
+            torch.arange(pi.size(1), out=pi.data.new(), device=pi.device).view(1, -1).expand_as(pi) ==
             pi.data.sort(1)[0]
         ).all(), "Invalid tour"
 
@@ -68,7 +68,7 @@ class TSP(object):
 class TSPDataset(Dataset):
     
     def __init__(self, filename=None, dataset=None, size=50, num_samples=1000000, offset=0, 
-                 non_Euc=False, rand_dist="standard", rescale=False, distribution=None, force_triangle_iter=2,
+                 non_Euc=False, rand_dist="standard", rescale=False, distribution=None, force_triangle_iter=2, no_coords=False, keep_rel=False,
                  normalize_loaded=True):
         
         super(TSPDataset, self).__init__()
@@ -107,16 +107,35 @@ class TSPDataset(Dataset):
             if rand_dist == "standard":
                 assert rescale == False
             rescale_tmp = (rand_dist == "complex")
-            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp, force_triangle_iter=force_triangle_iter)
+            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp, 
+                                         force_triangle_iter=force_triangle_iter, no_coords=no_coords, keep_rel=keep_rel)
             if (not rescale) and rescale_tmp:
                 self.data = recover_graph(self.data)
 
-        assert self.data["coords"].device == torch.device("cpu"), "Data should be on CPU"
-        # self.size = self.data["coords"].shape[0]
+        # FIXME: this may be wired
+        if no_coords:
+            self.data["distance"] /= 1e5    # entries are originally in [1,1e6], this makes the optimal tour length around 15.7
+
+
+        # assert self.data.get("coords", self.data.get("distance")).device == torch.device("cpu"), "Data should be on CPU"
+        
+        if not keep_rel and "rel_distance" in self.data:
+            del self.data["rel_distance"]
+        if keep_rel and "distance" in self.data and "rel_distance" not in self.data:
+            assert "coords" in self.data, "Need coords to compute rel_distance"
+            assert self.data.get("scale_factors") is None, "FIXME: scale_factors not supported with rel_distance"
+            coords = self.data["coords"]
+            dist_mat = self.data["distance"]
+            self.data["rel_distance"] = get_rel_dist_mat_batch(coords, dist_mat)
 
     @property
     def size(self):
-        return self.data["coords"].shape[0]
+        if "coords" in self.data:
+            return self.data["coords"].shape[0]
+        elif "distance" in self.data:
+            return self.data["distance"].shape[0]
+        else:
+            raise NotImplementedError("data has no 'coords' or 'distance' key")
 
     def __len__(self):
         return self.size
@@ -124,18 +143,13 @@ class TSPDataset(Dataset):
     def __getitem__(self, idx):
         # note: DataParallel requires everything does not support None type
         scale_factors = torch.tensor([float('nan')]) if not self.rescale else self.data['scale_factors'][idx]
-        if not self.non_Euc:
-            return {
-                "coords": self.data['coords'][idx],
-                "scale_factors": scale_factors,
-            }
-        else:
-            return {
-                "coords": self.data['coords'][idx],
-                "distance": self.data['distance'][idx],
-                "rel_distance": self.data['rel_distance'][idx],
-                "scale_factors": scale_factors,
-            }
+        data = {}
+        for k, v in self.data.items():
+            if k in ["coords", "distance", "rel_distance"]:
+                data[k] = v[idx]
+            elif k == "scale_factors":
+                data[k] = scale_factors
+        return data
     
     def pomo_augment(self, N1, N2):
         dataset = self.data
@@ -178,10 +192,12 @@ class TSPDataset(Dataset):
 
 
         # sample N1 starts for each instance
-        dataset['coords'] = sample_coords_start(dataset['coords'], N1)
+        if "coords" in dataset:
+            dataset['coords'] = sample_coords_start(dataset['coords'], N1)
         if self.non_Euc:
             dataset['distance'] = sample_dist_mat_start(dataset['distance'], N1)
-            dataset['rel_distance'] = sample_dist_mat_start(dataset['rel_distance'], N1)
+            if "rel_distance" in dataset:
+                dataset['rel_distance'] = sample_dist_mat_start(dataset['rel_distance'], N1)
         if dataset["scale_factors"] is not None:
             dataset["scale_factors"] = repeat_scale_factors(dataset["scale_factors"], N1)
         
@@ -214,10 +230,12 @@ class TSPDataset(Dataset):
             return x_augment
 
         # sample N2 rotations for each instance
-        dataset['coords'] = sample_coords_rot(dataset['coords'], N2)
+        if "coords" in dataset:
+            dataset['coords'] = sample_coords_rot(dataset['coords'], N2)
         if self.non_Euc:
             dataset['distance'] = sample_dist_mat_rot(dataset['distance'], N2)
-            dataset['rel_distance'] = sample_dist_mat_rot(dataset['rel_distance'], N2)
+            if "rel_distance" in dataset:
+                dataset['rel_distance'] = sample_dist_mat_rot(dataset['rel_distance'], N2)
         if dataset["scale_factors"] is not None:
             dataset["scale_factors"] = repeat_scale_factors(dataset["scale_factors"], N2)
 

@@ -69,7 +69,7 @@ class NonAutoRegDecoder(nn.Module):
         if temp is not None:  # Do not change temperature if not provided
             self.temp = temp
 
-    def forward(self, input, heatmap, force_steps=0, return_pi=False):
+    def forward(self, input, heatmap, force_steps=0, return_pi=False, ref_pi=None):
         """
         :param input: (batch_size, graph_size, node_dim) input node features or dictionary with multiple tensors
         :param return_pi: whether to return the output sequences, this is optional as it is not compatible with
@@ -77,10 +77,14 @@ class NonAutoRegDecoder(nn.Module):
         :return:
         """
 
-        _log_p, pi = self._inner(input, heatmap, force_steps=force_steps)
+        _log_p, pi = self._inner(input, heatmap, force_steps=force_steps, ref_pi=ref_pi)
 
         for i in range(force_steps):
-            assert pi[:, i].eq(i).all(), "Forced output incorrect"
+            if self.problem.NAME == 'tsp':
+                assert pi[:, i].eq(i).all(), "Forced output incorrect"
+            elif self.problem.NAME == 'cvrp':
+                assert i == 0
+                assert pi[:, i].eq(i+1).all(), "Forced output incorrect"
         
         cost, mask = self.problem.get_costs(input, pi)
         # Log likelyhood is calculated within the model since returning it per action does not work well with
@@ -93,10 +97,12 @@ class NonAutoRegDecoder(nn.Module):
 
 
     def beam_search(self, *args, **kwargs):
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         return self.problem.beam_search(*args, **kwargs, model=self)
     
 
     def propose_expansions(self, beam, fixed, expand_size=None, normalize=False, max_calc_batch_size=4096):
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         # First dim = batch_size * cur_beam_size
         log_p_topk, ind_topk = compute_in_batches(
             lambda b: self._get_log_p_topk(fixed[b.ids], b.state, k=expand_size, normalize=normalize),
@@ -144,7 +150,7 @@ class NonAutoRegDecoder(nn.Module):
         return log_p.sum(1)
 
  
-    def _inner(self, input, heatmap, force_steps=0):
+    def _inner(self, input, heatmap, force_steps=0, ref_pi=None):
 
         outputs = []
         sequences = []
@@ -155,6 +161,8 @@ class NonAutoRegDecoder(nn.Module):
 
         # Perform decoding steps
         i = 0
+        if ref_pi is not None:
+            ref_pi.shape == heatmap.shape[0], heatmap.shape[1]    # FIXME: we may pass a partial tour as ref_pi later
 
         while not (self.shrink_size is None and state.all_finished()):
 
@@ -169,13 +177,23 @@ class NonAutoRegDecoder(nn.Module):
                     # Filter states
                     state = state[unfinished]
 
-            log_p, mask = self._get_log_p(heatmap, state)
+            # FIXME: glimpse is always None here, but to unify the API when calling _get_log_p, we need to pass it
+            log_p, mask, glimpse = self._get_log_p(heatmap, state)
             
-            if i >= force_steps:
+            if ref_pi is not None:
+                selected = ref_pi[:, i]
+
+            elif i >= force_steps:
                 # Select the indices of the next nodes in the sequences, result (batch_size) long
                 selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
             else:
-                selected = torch.tensor([i]*batch_size, device=log_p.device)
+                if self.problem.NAME == 'tsp':
+                    selected = torch.tensor([i]*batch_size, device=log_p.device)
+                elif self.problem.NAME == 'cvrp':
+                    assert i == 0, "For CVRP, force_steps should be at most 1 (POMO)"
+                    selected = torch.tensor([1]*batch_size, device=log_p.device)    # node 0 is depot and already be taken!
+                else:
+                    raise NotImplementedError("force_steps is not implemented for {}".format(self.problem.NAME))
                 # NOTE: SHPP: 0 -> 1 -> xxx
                 # so when use SHPP mode to solve SHPP, let terminal=0, start=1
 
@@ -200,6 +218,7 @@ class NonAutoRegDecoder(nn.Module):
         return torch.stack(outputs, 1), torch.stack(sequences, 1)
 
     def sample_many(self, input, batch_rep=1, iter_rep=1):
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         """
         :param input: (batch_size, graph_size, node_dim) input node features
         :return:
@@ -235,7 +254,12 @@ class NonAutoRegDecoder(nn.Module):
             assert False, "Unknown decode type"
         return selected
 
+    def _precompute(self, heatmap):
+        return heatmap
+
+
     def _get_log_p_topk(self, fixed, state, k=None, normalize=True):
+        raise NotImplementedError("updated in Apr-2024, this will no longer be used")
         log_p, mask, glimpse = self._get_log_p(fixed, state, normalize=normalize)
 
         # Return topk
@@ -273,4 +297,4 @@ class NonAutoRegDecoder(nn.Module):
 
         assert not torch.isnan(log_p).any()
 
-        return log_p, mask
+        return log_p, mask, None

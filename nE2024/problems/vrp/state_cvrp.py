@@ -26,7 +26,7 @@ class StateCVRP(NamedTuple):
     used_capacity: torch.Tensor
     visited_: torch.Tensor  # Keeps track of nodes that have been visited
     lengths: torch.Tensor
-    cur_coord: torch.Tensor
+    # cur_coord: torch.Tensor
     i: torch.Tensor  # Keeps track of step
 
     VEHICLE_CAPACITY = 1.0  # Hardcoded
@@ -37,7 +37,11 @@ class StateCVRP(NamedTuple):
             return self.visited_
         else:
             return mask_long2bool(self.visited_, n=self.demand.size(-1))
-
+    
+    @property
+    def n_nodes(self):
+        return self.dist.size(-2)
+    
     # @property
     # def dist(self):
     #     return (self.coords[:, :, None, :] - self.coords[:, None, :, :]).norm(p=2, dim=-1)
@@ -50,7 +54,7 @@ class StateCVRP(NamedTuple):
             used_capacity=self.used_capacity[key],
             visited_=self.visited_[key],
             lengths=self.lengths[key],
-            cur_coord=self.cur_coord[key],
+            # cur_coord=self.cur_coord[key],
         )
 
     # Warning: cannot override len of NamedTuple, len should be number of fields, not batch size
@@ -63,35 +67,36 @@ class StateCVRP(NamedTuple):
         if data.get("scale_factors") is not None:
             data = recover_graph(data)  # use the true distance matrix here
 
-        loc = data['coords']
+        loc = data.get("coords")
         demand = data['demand']
         if 'distance' in data:
             dist = data['distance']
         else:
             dist = (loc[:, :, None, :] - loc[:, None, :, :]).norm(p=2, dim=-1)
 
-        batch_size, n_loc, _ = loc.size()
-        prev_a = torch.zeros(batch_size, 1, dtype=torch.long, device=loc.device)
+        batch_size, n_loc, _ = dist.size()
+        device = dist.device
+        prev_a = torch.zeros(batch_size, 1, dtype=torch.long, device=device)
         return StateCVRP(
             coords=loc,
             demand=demand,
             dist=dist,
-            ids=torch.arange(batch_size, dtype=torch.int64, device=loc.device)[:, None],  # Add steps dimension
+            ids=torch.arange(batch_size, dtype=torch.int64, device=device)[:, None],  # Add steps dimension
             prev_a=prev_a,
             used_capacity=demand.new_zeros(batch_size, 1),
             visited_=(  # Visited as mask is easier to understand, as long more memory efficient
                 # Keep visited_ with depot so we can scatter efficiently
                 torch.zeros(
                     batch_size, 1, n_loc,
-                    dtype=torch.uint8, device=loc.device
+                    dtype=torch.uint8, device=device
                 )
                 if visited_dtype == torch.uint8
                 else torch.zeros(batch_size, 1, (n_loc + 63) // 64, 
-                                 dtype=torch.int64, device=loc.device)  # Ceil
+                                 dtype=torch.int64, device=device)  # Ceil
                                 ),
-            lengths=torch.zeros(batch_size, 1, device=loc.device),
-            cur_coord=loc[:,0][:, None, :],  # Add step dimension
-            i=torch.zeros(1, dtype=torch.int64, device=loc.device)  # Vector with length num_steps
+            lengths=torch.zeros(batch_size, 1, device=device),
+            # cur_coord=loc[:,0][:, None, :],  # Add step dimension
+            i=torch.zeros(1, dtype=torch.int64, device=device)  # Vector with length num_steps
         )
 
     def get_final_cost(self):
@@ -110,7 +115,7 @@ class StateCVRP(NamedTuple):
         n_loc = self.demand.size(-1)  # Excludes depot
 
         # Add the length
-        cur_coord = self.coords[self.ids, selected]
+        # cur_coord = self.coords[self.ids, selected]
         # cur_coord = self.coords.gather(
         #     1,
         #     selected[:, None].expand(selected.size(0), 1, self.coords.size(-1))
@@ -139,7 +144,7 @@ class StateCVRP(NamedTuple):
 
         return self._replace(
             prev_a=prev_a, used_capacity=used_capacity, visited_=visited_,
-            lengths=lengths, cur_coord=cur_coord, i=self.i + 1
+            lengths=lengths, i=self.i + 1
         )
 
     def all_finished(self):

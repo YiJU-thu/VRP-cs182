@@ -1,8 +1,7 @@
 import torch
 from torch import nn
 
-from utils.tensor_functions import randomized_svd_batch
-
+from utils.tensor_functions import randomized_svd_batch, knn_adjacency_torch
 
 from loguru import logger
 
@@ -19,6 +18,11 @@ class InitEncoder(nn.Module):
                  mul_sigma_uv=False,
                  full_svd=False,
                  only_distance=False,
+                 no_coords=False,
+                 edge_embedding_dim=None,
+                #  adj_mat_embedding_dim=None,
+                 kNN=-1,
+                 random_node_dim=0
                  ):
         super(InitEncoder, self).__init__()
 
@@ -38,16 +42,27 @@ class InitEncoder(nn.Module):
         self.svd_original_edge = svd_original_edge
         self.mul_sigma_uv = mul_sigma_uv
         self.full_svd = full_svd
+        only_distance = (only_distance or no_coords)
         self.only_distance = only_distance
+        self.random_node_dim = random_node_dim
+
+        if no_coords:
+            assert (rank_k_approx > 0 or random_node_dim > 0)
+        
+        self.embed_edge = (edge_embedding_dim is not None)
+        self.edge_embedding_dim = edge_embedding_dim
+        # self.embed_adj_mat = (adj_mat_embedding_dim is not None)
+        self.kNN = kNN
 
         # assert problem.NAME == 'tsp', "Only tsp is supported at the moment"
         # if only_distance:
         if only_distance:
             assert non_Euc == True, "only_distance is only supported for non-Euclidean input"
-            assert rank_k_approx > 0, "only_distance is not supported for rank_k_approx = 0"
-            assert svd_original_edge == True, "must svd on the original edge matrix if only_distance is True"
+            if random_node_dim == 0:
+                assert rank_k_approx > 0, "only_distance is not supported for rank_k_approx = 0"
+                assert svd_original_edge == True, "must svd on the original edge matrix if only_distance is True"
 
-        node_dim = 2*(1-only_distance) + 2 * rank_k_approx  # x, y, u_i_k, v_i_k
+        node_dim = 2*(1-only_distance) + 2 * rank_k_approx + random_node_dim  # x, y, u_i_k, v_i_k
         # Problem specific context parameters (placeholder and step context dimension)
         if self.is_vrp or self.is_orienteering or self.is_pctsp:
             # Embedding of last node + remaining_capacity / remaining length / remaining prize to collect
@@ -70,6 +85,14 @@ class InitEncoder(nn.Module):
 
         self.init_embed = nn.Linear(node_dim, embedding_dim)
 
+        if edge_embedding_dim is not None:
+            self.edge_val_embed = nn.Linear(1, edge_embedding_dim)
+        # if adj_mat_embedding_dim is not None:
+        #     assert kNN != -1, "kNN < n, otherwise all 1 matrix"
+        #     self.edge_adj_embed = nn.Embedding(2, adj_mat_embedding_dim)    # class 0, 1
+
+
+
 
     def forward(self, input):
         """
@@ -77,7 +100,7 @@ class InitEncoder(nn.Module):
         :return:
         """
 
-        # return init_embed, Sk
+        # return init_embed, (edge_embed), Sk
 
         return self.get_init_embed(input)
 
@@ -86,29 +109,58 @@ class InitEncoder(nn.Module):
         
         # add sanity check for input
         assert isinstance(input, dict), "Input must be a dictionary"
-        assert 'coords' in input, "Input must contain 'coords' key"
-        I, N, _ = input['coords'].shape
+        I, N = self._get_input_shape(input)
+        
         if not self.non_Euc: # input is Euclidean
+            assert "coords" in input, "Input must contain 'coords' key"
             assert self.rank_k_approx == 0, "rank_k_approx is not supported for Euclidean input"
             assert self.only_distance == False, "only_distance is not supported for Euclidean input"
             scale_factors_dim = 1
         else: # non-Euclidean
-            assert "rel_distance" in input, "Input must contain 'rel_distance' key"
+            assert "distance" in input, "Input must contain 'distance' key"
+            # assert "rel_distance" in input, "Input must contain 'rel_distance' key"
             assert input["distance"].shape == (I, N, N), "distance must be of shape (I, N, N)"
-            assert input["rel_distance"].shape == (I, N, N), "rel_distance must be of shape (I, N, N)"
+            # assert input["rel_distance"].shape == (I, N, N), "rel_distance must be of shape (I, N, N)"
             scale_factors_dim = 3
 
         # ================================================
 
-        return self._init_embed(input) # (init_embed, Sk)
+        x, S = self._init_embed(input) # (init_embed, Sk)
+        if not self.embed_edge:
+            return x, S
+        else:
+            
+            if self.kNN != -1:
+                assert self.kNN < N, "kNN < n, otherwise all 1 matrix"
+                if "adj_idx" not in input:
+                    # for POMO, etc., it is more efficient to compute adj_idx in advance
+                    input["adj_idx"] = knn_adjacency_torch(input['distance'], self.kNN, return_expand=False)
+                dist_topk = input['distance'].gather(-1, input['adj_idx'])
+                e = self.edge_val_embed(dist_topk[:,:,:,None])
+                assert e.shape == (I, N, self.kNN, self.edge_embedding_dim), "e.shape is {}".format(e.shape)
+            else:
+                e = self.edge_val_embed(input['distance'][:, :, :, None])
+                assert e.shape == (I, N, N, self.edge_embedding_dim), "e.shape is {}".format(e.shape)
+            # if self.embed_adj_mat:
+            #     adj_mat = knn_adjacency_torch(input['distance'], self.kNN)
+            #     edge_adj_embed = self.edge_adj_embed(adj_mat)
+            #     e = torch.cat([edge_val_embed, edge_adj_embed], dim=-1)
+            # else:
+            
+            return x, e, S
 
 
     def _init_embed(self, input):        
         # svd and add node features, then go through the linear layer
-        coords = input['coords']
-        I, N, _ = coords.shape
+        I, N = self._get_input_shape(input)
+
         if self.rank_k_approx == 0:
-            nodes = coords
+            if self.only_distance:
+                # sample (I, N, self.random_node_dim) random node features in U(0,1)
+                assert self.random_node_dim > 0
+                nodes = torch.rand(I, N, self.random_node_dim, device=input['distance'].device)
+            else:
+                nodes = input['coords']
             Sk = None
         else:
             mat_to_svd = input['distance'] if self.svd_original_edge else input['rel_distance']
@@ -144,6 +196,7 @@ class InitEncoder(nn.Module):
             if self.only_distance:
                 nodes = torch.cat([Uk, Vk], dim=2)
             else:
+                coords = input['coords']
                 nodes = torch.cat([coords, Uk, Vk], dim=2)
         
         if self.is_vrp or self.is_orienteering or self.is_pctsp: # VRP, OP, PCTSP
@@ -154,7 +207,7 @@ class InitEncoder(nn.Module):
             else:
                 assert self.is_pctsp
                 features = ('deterministic_prize', 'penalty')
-            assert nodes.shape == (coords.shape[0], coords.shape[1], 2*(1-self.only_distance) + 2 * self.rank_k_approx)
+            assert nodes.shape == (I,N, 2*(1-self.only_distance) + 2 * self.rank_k_approx)
             return torch.cat(
                 (
                     self.init_embed_depot(nodes[:,0])[:, None, :],
@@ -166,5 +219,14 @@ class InitEncoder(nn.Module):
                 1
             ), Sk
         else: #TSP
-            assert nodes.shape == (coords.shape[0], coords.shape[1], 2*(1-self.only_distance) + 2 * self.rank_k_approx), "nodes.shape is {}".format(nodes.shape)
+            assert nodes.shape == (I, N, 2*(1-self.only_distance) + 2 * self.rank_k_approx + self.random_node_dim), "nodes.shape is {}".format(nodes.shape)
             return self.init_embed(nodes), Sk
+    
+    @staticmethod
+    def _get_input_shape(input):
+        if "coords" in input:
+            return input["coords"].shape[:2]    # (batch_size, graph_size)
+        elif "distance" in input:
+            return input["distance"].shape[:2]  # (batch_size, graph_size, graph_size)
+        else:
+            raise ValueError("Input must contain 'coords' or 'distance' key")

@@ -15,7 +15,7 @@ utils_vrp_path = os.path.join(curr_path, '..', '..', '..', 'utils_project')
 if utils_vrp_path not in sys.path:
     sys.path.append(utils_vrp_path)
 from utils_vrp import get_random_graph, normalize_graph, recover_graph,\
-      get_tour_len_torch, to_torch
+      get_tour_len_torch, to_torch, get_rel_dist_mat_batch
 
 
 class CVRP(object):
@@ -32,7 +32,7 @@ class CVRP(object):
 
         # Sorting it should give all zeros at front and then 1...n
         assert (
-            torch.arange(1, graph_size + 1, out=pi.data.new()).view(1, -1).expand(batch_size, graph_size) ==
+            torch.arange(1, graph_size + 1, out=pi.data.new(), device=pi.device).view(1, -1).expand(batch_size, graph_size) ==
             sorted_pi[:, -graph_size:]
         ).all() and (sorted_pi[:, :-graph_size] == 0).all(), "Invalid tour"
 
@@ -177,8 +177,10 @@ def make_instance(args):
 
 class VRPDataset(Dataset):
     
-    def __init__(self, filename=None, dataset=None, size=50, num_samples=1000000, offset=0,
-                    non_Euc=False, rand_dist="standard", rescale=False, distribution=None, force_triangle_iter=2):
+    def __init__(self, filename=None, dataset=None, size=50, num_samples=1000000, offset=0, 
+                 non_Euc=False, rand_dist="standard", rescale=False, distribution=None, force_triangle_iter=2, no_coords=False, keep_rel=False,
+                 normalize_loaded=True):
+        
         super(VRPDataset, self).__init__()
         self.non_Euc = non_Euc
         self.rescale = rescale
@@ -194,48 +196,56 @@ class VRPDataset(Dataset):
                     data = pickle.load(f)
             else:
                 data = dataset
-        
+            
             if isinstance(data, dict):
-                # keys are: coords, distance, demands (rel_distance, scale_factors)
+                # keys are: coords, distance, (rel_distance, scale_factors)
                 data = to_torch(data)
-                self.data = normalize_graph(data, rescale=rescale)
+                if normalize_loaded:
+                    data = normalize_graph(data, rescale=rescale)
+                self.data = data
 
             else:
+                # TODO: old version, inputs would be (I,N,2) ndarray
                 raise NotImplementedError
 
+
+
         else:
-            """
-            # From VRP with RL paper https://arxiv.org/abs/1802.04240
-            CAPACITIES = {
-                10: 20.,
-                20: 30.,
-                50: 40.,
-                100: 50.
-            }
-
-            self.data = [
-                {
-                    'loc': torch.FloatTensor(size, 2).uniform_(0, 1),
-                    # Uniform 1 - 9, scaled by capacities
-                    'demand': (torch.FloatTensor(size).uniform_(0, 9).int() + 1).float() / CAPACITIES[size],
-                    'depot': torch.FloatTensor(2).uniform_(0, 1)
-                }
-                for i in range(num_samples)
-            ]
-
-        self.size = len(self.data)"""
-            # Use get_random_graph function from utils.py
+            # Sample points randomly in [0, 1] square
+            # self.data = [torch.FloatTensor(size, 2).uniform_(0, 1) for i in range(num_samples)]
             assert rand_dist in ["standard", "complex"]
             if rand_dist == "standard":
                 assert rescale == False
             rescale_tmp = (rand_dist == "complex")
-            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp, force_triangle_iter=force_triangle_iter, is_cvrp=True)
-            if not rescale:
+            self.data = get_random_graph(n=size, num_graphs=num_samples, non_Euc=non_Euc, rescale=rescale_tmp, 
+                                         force_triangle_iter=force_triangle_iter, no_coords=no_coords, keep_rel=keep_rel, is_cvrp=True)
+            if (not rescale) and rescale_tmp:
                 self.data = recover_graph(self.data)
-    
+
+        # FIXME: this may be wired
+        if no_coords:
+            self.data["distance"] /= 1e5    # entries are originally in [1,1e6], this makes the optimal tour length around 15.7
+
+
+        # assert self.data.get("coords", self.data.get("distance")).device == torch.device("cpu"), "Data should be on CPU"
+        if not keep_rel and "rel_distance" in self.data:
+            del self.data["rel_distance"]
+        if keep_rel and "distance" in self.data and "rel_distance" not in self.data:
+            assert "coords" in self.data, "Need coords to compute rel_distance"
+            assert self.data.get("scale_factors") is None, "FIXME: scale_factors not supported with rel_distance"
+            coords = self.data["coords"]
+            dist_mat = self.data["distance"]
+            self.data["rel_distance"] = get_rel_dist_mat_batch(coords, dist_mat)
+
+
     @property
     def size(self):
-        return self.data["coords"].shape[0]
+        if "coords" in self.data:
+            return self.data["coords"].shape[0]
+        elif "distance" in self.data:
+            return self.data["distance"].shape[0]
+        else:
+            raise NotImplementedError("data has no 'coords' or 'distance' key")
 
     def __len__(self):
         return self.size
@@ -245,17 +255,146 @@ class VRPDataset(Dataset):
         # note: DataParallel requires everything does not support None type
         scale_factors = torch.tensor([float('nan')]) if not self.rescale else self.data['scale_factors'][idx]
         # logger.debug(self.data.keys())
-        if not self.non_Euc:
-            return {
-                "coords": self.data['coords'][idx],
-                "demand": self.data['demand'][idx],
-                "scale_factors": scale_factors,
-            }
-        else:
-            return {
-                "coords": self.data['coords'][idx],
-                "distance": self.data['distance'][idx],
-                "rel_distance": self.data['rel_distance'][idx],
-                "demand": self.data['demand'][idx],
-                "scale_factors": scale_factors,
-            }
+        data = {}
+        for k, v in self.data.items():
+            if k in ["coords", "distance", "rel_distance", "demand"]:
+                data[k] = v[idx]
+            elif k == "scale_factors":
+                data[k] = scale_factors
+        return data
+
+    def pomo_augment(self, N1, N2):
+        # node 0 is depot
+
+        dataset = self.data
+
+        def sample_coords_start(x, N1):
+            if N1 == 1 or N1 is None:
+                return x
+            B, N, _ = x.shape   # shape: (batch_size, graph_size, 2)
+            
+            def coords_swap(coords, j, k):
+                # coords: (batch_size, N, 2)
+                # swap the j-th and k-th nodes
+                coords_swap = coords.clone()
+                coords_swap[:, [j, k]] = coords[:, [k, j]]
+                return coords_swap
+
+            # NOTE: this is a different methods from TSP (but should have the same effect)
+            # since node 0 is the depot, it is never swapped
+            # (in POMO, the 1st node (after depot) will be chosen as the first step to take)
+            x_augment = torch.stack([coords_swap(x, 1, (i+1)%(N-1)) for i in range(N1)]).\
+                transpose(0, 1).\
+                    reshape(B*N1, N, 2)
+            assert x_augment.shape == (B*N1, N, 2)
+            assert torch.norm(x_augment[0, 1] - x_augment[1, 2]) < 1e-8  # graph 0's first node is graph 1's last node
+            return x_augment
+        
+        def sample_dist_mat_start(x, N1):
+            if N1 == 1 or N1 is None:
+                return x
+            B, N, _ = x.shape   # shape: (batch_size, graph_size, graph_size)
+            
+            def dist_swap(dist, j, k):
+                # dist: (batch_size, N, N)
+                # swap the j-th and k-th nodes
+                dist_swap = dist.clone()
+                dist_swap[:, [j, k]] = dist[:, [k, j]]
+                dist_swap[:, :, [j, k]] = dist_swap[:, :, [k, j]]
+                return dist_swap
+
+            # NOTE: this is a different methods from TSP (but should have the same effect)
+            # since node 0 is the depot, it is never swapped
+            # (in POMO, the 1st node (after depot) will be chosen as the first step to take)
+            x_augment = torch.stack([dist_swap(x, 1, (i+1)%(N-1)) for i in range(N1)]).\
+                transpose(0, 1).\
+                    reshape(B*N1, N, N)
+            assert x_augment.shape == (B*N1, N, N)
+            assert torch.norm(x_augment[0, 1, 0] - x_augment[1, 2, 0]) < 1e-8  # graph 0's first node is graph 1's last node
+            return x_augment
+        
+        def sample_demand_start(x, N1):
+            if N1 == 1 or N1 is None:
+                return x
+            B, N = x.shape
+            def demand_swap(demands, j, k):
+                # demands: (batch_size, N)
+                # swap the j-th and k-th nodes
+                demand_swap = demands.clone()
+                demand_swap[:, [j, k]] = demands[:, [k, j]]
+                return demand_swap
+            x_augment = torch.stack([demand_swap(x, 0, (i)%N) for i in range(N1)]).\
+                transpose(0, 1).\
+                    reshape(B*N1, N)
+
+            assert x_augment.shape == (B*N1, N)
+            assert torch.norm(x_augment[0, 0] - x_augment[1, 1]) < 1e-8  # graph 0's first node is graph 1's last node
+            return x_augment
+
+        def repeat_scale_factors(x, N1):
+            if N1 == 1 or N1 is None:
+                return x
+            B, d = x.shape
+            x_augment = x[:,None,:].repeat(1, N1, 1).reshape(B*N1, d)
+            return x_augment
+
+
+        # sample N1 starts for each instance
+        if "coords" in dataset:
+            dataset['coords'] = sample_coords_start(dataset['coords'], N1)
+        if self.non_Euc:
+            dataset['distance'] = sample_dist_mat_start(dataset['distance'], N1)
+            if "rel_distance" in dataset:
+                dataset['rel_distance'] = sample_dist_mat_start(dataset['rel_distance'], N1)
+        dataset['demand'] = sample_demand_start(dataset['demand'], N1)
+        if dataset["scale_factors"] is not None:
+            dataset["scale_factors"] = repeat_scale_factors(dataset["scale_factors"], N1)
+        
+
+        def sample_coords_rot(x, N2):
+            if N2==1 or N2 is None:
+                return x
+            B_N1, N, _ = x.shape  # shape: (batch_size*N1, graph_size, 2)
+            
+            # generate N2 rotation matrices
+            rot_mats = [torch.tensor([[torch.cos(theta), -torch.sin(theta)],
+                                                [torch.sin(theta), torch.cos(theta)]])
+                        for theta in torch.rand(N2) * 2 * torch.pi]
+            assert len(rot_mats) == N2
+            
+            # Rotate the matrices around (0.5, 0.5): 
+            # first translate the matrix to center at (0, 0), then rotate, then translate back
+            # (the origin coords are in a unit square, so the center is (0.5, 0.5))
+            x_augment = torch.stack([torch.matmul(x - 0.5, rot_mat) + 0.5 for rot_mat in rot_mats]).\
+                transpose(0, 1).\
+                    reshape(B_N1*N2, N, 2)
+            assert x_augment.shape == (B_N1*N2, N, 2)
+            return x_augment
+        
+        def sample_dist_mat_rot(x, N2):
+            if N2==1 or N2 is None:
+                return x
+            B_N1, N, _ = x.shape # shape: (batch_size*N1, graph_size, graph_size)
+            x_augment = torch.stack([x for _ in range(N2)]).transpose(0, 1).reshape(B_N1*N2, N, N)
+            return x_augment
+
+        def sample_demand_rot(x, N2):
+            if N2==1 or N2 is None:
+                return x
+            B_N1, N = x.shape
+            x_augment = torch.stack([x for _ in range(N2)]).transpose(0, 1).reshape(B_N1*N2, N)
+            return x_augment
+
+
+        # sample N2 rotations for each instance
+        if "coords" in dataset:
+            dataset['coords'] = sample_coords_rot(dataset['coords'], N2)
+        if self.non_Euc:
+            dataset['distance'] = sample_dist_mat_rot(dataset['distance'], N2)
+            if "rel_distance" in dataset:
+                dataset['rel_distance'] = sample_dist_mat_rot(dataset['rel_distance'], N2)
+        dataset['demand'] = sample_demand_rot(dataset['demand'], N2)
+        if dataset["scale_factors"] is not None:
+            dataset["scale_factors"] = repeat_scale_factors(dataset["scale_factors"], N2)
+
+        self.data = dataset

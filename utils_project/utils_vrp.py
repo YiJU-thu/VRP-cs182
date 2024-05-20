@@ -94,7 +94,7 @@ def get_tour_len_torch(data, tour):
     else:
         dist_mat = get_euclidean_dist_matrix(data["coords"])
     
-    (I, N, _) = data["coords"].shape
+    (I, N, _) =  dist_mat.shape
     _, T = tour.shape
     # assert tour.shape == (I, N) # NOTE: I skip this check, as we should allow a longer or shorter path (e.g., in CVRP)
     t0 = tour.flatten()
@@ -263,8 +263,12 @@ def force_triangle_ineq(X: torch.Tensor, iter=4, verbose=False) -> torch.Tensor:
         A batch of distance matrices (batch_size, n,n) that satisfy the triangle
         inequality.
     """
-    X0 = X.clone()
+
     I, N, _ = X.shape # I: batch size, N: graph size
+    max_per_batch = 10000000 // N ** 2
+    if I > max_per_batch:
+        return torch.cat([force_triangle_ineq(X[i:i+max_per_batch], iter=iter, verbose=verbose) for i in range(0, I, max_per_batch)], dim=0)
+
     s = 0
     iter = float('inf') if iter is None else iter
     while s < iter:
@@ -280,7 +284,8 @@ def force_triangle_ineq(X: torch.Tensor, iter=4, verbose=False) -> torch.Tensor:
     return Z
 
 
-def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=None, force_triangle_iter=0, is_cvrp=False):
+def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, 
+                     seed=None, force_triangle_iter=0, is_cvrp=False, keep_rel=True, no_coords=False):
     """
     Creates a batch of num_graphs random graph with N vertices.
     In is always in a "standard" distribution, but we also generate "scale_factors" to transform it to a more realistic/diverse instance
@@ -294,6 +299,8 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
         force_triangle_iter: if >0, force the triangle inequality to hold for the distance matrix -> use for [iter] param in [force_triangle_ineq]
             suggested: iter=2 for training set generation, iter=4 or None for test set generation
         is_cvrp: if True, generate a CVRP instance, i.e., with demands
+        keep_rel: if False, do not keep the relative distance matrix
+        no_coords: if True (then must be non_Euc=True), generate distance matrix directly, according to MatNet: https://arxiv.org/abs/2106.11113
     
     return: a dict with keys
         coords: shape = (num_graphs, n, 2)
@@ -320,6 +327,7 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
 
     rescale_factors_dim = 3 if non_Euc else 1
     if rescale:
+        assert no_coords == False, "has not implemented no_coords=True with rescale=True"
         # sd = 0.5 -> 50% between exp(-0.5) and exp(0.5), i.e., (0.61, 1.65), 95%: (0.22, 4.48)
         to_concat = []
         r_y_factors = LogNormal(torch.tensor(0.0), torch.tensor(0.5)).sample(sample_shape=(num_graphs, 1))
@@ -340,39 +348,50 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
     else:
         scale_factors = None
 
-
-    # Generate points randomly in unit square according to
-    points = Uniform(0, 1).sample(sample_shape=(num_graphs, n, 2))
-    assert points.shape == (num_graphs, n, 2)
-
-    if not non_Euc:
+    if not no_coords:
+        # Generate points randomly in unit square according to
+        points = Uniform(0, 1).sample(sample_shape=(num_graphs, n, 2))
+        assert points.shape == (num_graphs, n, 2)
         data = {"coords": points, "scale_factors": scale_factors}
     else:
+        assert non_Euc, "no_coords=True must be used with non_Euc=True"
+        data = {"scale_factors": scale_factors}
+
+    if non_Euc:
         # Yi: we decompose the relative matrix into two parts:
         # (1) a symmetric matrix, X1, and (2) a matrix represents the "asymmetry", X2,
         # so, relative matrix X = X1 * (1+X2)
         # further, element in X1 follows a [log-normal] distribution, mu=0, sigma=sym_std(=0.5)
         #       and element in X2 follows a [normal] distribution, mu=0, sigma=asym_std(=0.05)
 
-        euclidean_distance_matrix = get_euclidean_dist_matrix(points)
-        assert euclidean_distance_matrix.shape == (num_graphs, n, n)
+        if not no_coords:
+            points = data["coords"]
+            euclidean_distance_matrix = get_euclidean_dist_matrix(points)
+            assert euclidean_distance_matrix.shape == (num_graphs, n, n)
 
-        sym_std = 0.5
-        sym_log = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))
-        sym_rel_dist_mat = torch.exp(sym_std * np.sqrt(0.5) * (sym_log + sym_log.permute(0, 2, 1)))
+            sym_std = 0.5
+            sym_log = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))
+            sym_rel_dist_mat = torch.exp(sym_std * np.sqrt(0.5) * (sym_log + sym_log.permute(0, 2, 1)))
 
-        asym_std = 0.05
-        asym = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))
-        asym_rel_dist_mat = asym_std * np.sqrt(0.5) * (asym - asym.permute(0, 2, 1))
+            asym_std = 0.05
+            asym = Normal(loc=0, scale=1).sample(sample_shape=(num_graphs, n, n))
+            asym_rel_dist_mat = asym_std * np.sqrt(0.5) * (asym - asym.permute(0, 2, 1))
 
-        relative_dist_matrix = sym_rel_dist_mat * torch.maximum(1 + asym_rel_dist_mat, torch.tensor(0.0))
-        relative_dist_matrix.clamp_(0, 10)
-        assert relative_dist_matrix.shape == (num_graphs, n, n)
+            relative_dist_matrix = sym_rel_dist_mat * torch.maximum(1 + asym_rel_dist_mat, torch.tensor(0.0))
+            relative_dist_matrix.clamp_(0, 10)
+            assert relative_dist_matrix.shape == (num_graphs, n, n)
 
-        distance_matrix = relative_dist_matrix * euclidean_distance_matrix
+            distance_matrix = relative_dist_matrix * euclidean_distance_matrix
 
-        data =  {"coords": points, "rel_distance": relative_dist_matrix, "distance": distance_matrix,
-                "scale_factors": scale_factors}
+            data["rel_distance"] = relative_dist_matrix
+            data["distance"] = distance_matrix
+        
+        else:
+            # generate distance matrix directly, according to MatNet: https://arxiv.org/abs/2106.11113
+            min_val, max_val = 1, int(1e6)
+            distance_matrix = torch.randint(min_val, max_val, (num_graphs, n, n)).float()
+            distance_matrix[:,range(n),range(n)] = 0    # set diagonal to 0
+            data["distance"] = distance_matrix
 
         if force_triangle_iter > 0:
             # TODO: first, recover the actual distance matrix, then force triangle inequality
@@ -381,6 +400,9 @@ def get_random_graph(n: int, num_graphs: int, non_Euc=True, rescale=False, seed=
             data["distance"] = force_triangle_ineq(data["distance"], iter=force_triangle_iter)
             data = normalize_graph(data, rescale=rescale)
     
+    if not keep_rel and "rel_distance" in data:
+        del data["rel_distance"]
+
     if is_cvrp:
         # From VRP with RL paper https://arxiv.org/abs/1802.04240
         CAPACITIES = {
@@ -404,6 +426,8 @@ def get_random_graph_np(*args, **kwargs):
 
 
 def scale_graph(data, sym_std=0.5, asym_std=0.05):
+    # FIXME: this cannot work with no_coords data
+    # further, its not very clear how to normalize the input dist_mat
 
     assert isinstance(data, dict)
     coords = data["coords"]
@@ -507,6 +531,11 @@ def normalize_graph(data, rescale=False):
             demand: (I, N) tensor
     """
 
+    # FIXME: if do not have coords, then return directly
+    if "coords" not in data:
+        return data
+
+
     if data.get("scale_factors") is not None:
         data = recover_graph(data)
 
@@ -574,6 +603,33 @@ def normalize_graph_np(*args, **kwargs):
 
 def recover_graph_np(data):
     return to_np(recover_graph(to_torch(data)))
+
+
+def knn_adjacency_torch(distances, k):
+    """
+    args:
+        distances: torch.Tensor, shape [batch_size, N, N]
+        k: int, number of nearest neighbors to consider
+
+    return:
+        adj_mat: torch.Tensor, shape [batch_size, N, N]
+    """
+
+    # Sort the distances along the last dimension
+    _, indices = torch.topk(distances, k=k, dim=-1, largest=False)
+    print(indices.shape)
+    # Create a mask for the k-nearest neighbors
+    mask = torch.zeros_like(distances)
+    indices_expanded = indices#.unsqueeze(-1).expand(-1, -1, -1, distances.size(-1))
+    print(indices_expanded.shape)
+    mask.scatter_(-1, indices_expanded, 1)
+    
+    # Convert the mask to Boolean adjacency matrices
+    adj_mat = mask.bool()
+    return adj_mat
+
+
+
 
 
 @deprecated

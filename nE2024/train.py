@@ -9,7 +9,7 @@ from torch.nn import DataParallel
 
 from nets.decoder_gat import set_decode_type
 from utils.log_utils import log_values
-from utils import move_to
+from utils import move_to, gpu_memory_usage
 
 import time
 from loguru import logger
@@ -19,18 +19,29 @@ def get_inner_model(model):
 
 def validate(model, dataset, opts):
     # Validate
-    print('Validating...')
-    cost = rollout(model, dataset, opts, force_steps=0)
+    print('Validating with greedy...')
+    cost = rollout(model, dataset, opts, force_steps=0, decode_type="greedy")
     avg_cost = cost.mean()
     print('Validation overall avg_cost: {} +- {}'.format(
         avg_cost, torch.std(cost) / math.sqrt(len(cost))))
 
-    return avg_cost
+    # beam search
+    width = opts.val_beam_size
+    if width is None or width <= 1:
+        return avg_cost, None
+    print(f'First 100 - greedy: {cost[:100].mean()}')
+    print('Validating with beam search...')
+    cost = rollout(model, dataset, opts, force_steps=0, decode_type="bs")
+    avg_cost_bs = cost.mean()
+    print('Validation [beam search {}] overall avg_cost: {} +- {}'.format(
+        width, avg_cost_bs, torch.std(cost) / math.sqrt(len(cost))))
+    return avg_cost, avg_cost_bs
 
 
-def rollout(model, dataset, opts, force_steps=0):
+def rollout(model, dataset, opts, force_steps=0, decode_type="greedy"):
     # Put in greedy evaluation mode!
-    set_decode_type(model, "greedy")
+    assert decode_type in ["greedy", "bs"]
+    set_decode_type(model, decode_type)
     model.eval()
 
     def eval_model_bat(bat):
@@ -38,8 +49,15 @@ def rollout(model, dataset, opts, force_steps=0):
             cost, _ = model(move_to(bat, opts.device), force_steps=force_steps)
         return cost.data.cpu()
 
+    def eval_model_bat_bs(bat, width):
+        with torch.no_grad():
+            seq, cost = model.beam_search(move_to(bat, opts.device), beam_size=width, compress_mask=False, max_calc_batch_size=opts.eval_batch_size)
+        return torch.tensor(cost).data.cpu()
+
+
     val = []
-    for batch in tqdm(DataLoader(dataset, batch_size=opts.eval_batch_size), disable=opts.no_progress_bar):
+    batch_size = opts.eval_batch_size if decode_type == "greedy" else 100 # to save time, we only evaluate the first 100 samples
+    for batch in tqdm(DataLoader(dataset, batch_size=batch_size), disable=opts.no_progress_bar):
         if not opts.rescale_dist:
             if 'scale_factors' in batch.keys():
                 batch['scale_factors'] = None
@@ -47,7 +65,11 @@ def rollout(model, dataset, opts, force_steps=0):
                 batch['data']['scale_factors'] = None
             else:
                 raise ValueError("No scale_factors in batch")
-        val.append(eval_model_bat(batch))
+        if decode_type == "greedy":
+            val.append(eval_model_bat(batch))
+        elif decode_type == "bs":
+            val.append(eval_model_bat_bs(batch, opts.val_beam_size))
+            break # only evaluate the first batch
 
 
     return torch.cat(val, 0)
@@ -73,7 +95,7 @@ def clip_grad_norms(param_groups, max_norm=math.inf):
     return grad_norms, grad_norms_clipped
 
 
-def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, problem, tb_logger, wandb_logger, opts):
+def train_epoch(model, dataloader, optimizer, baseline, lr_scheduler, epoch, val_dataset, problem, tb_logger, wandb_logger, opts):
     print("Start train epoch {}, lr={} for run {}".format(epoch, optimizer.param_groups[0]['lr'], opts.run_name))
     step = epoch * (opts.epoch_size // opts.batch_size)
     start_time = time.time()
@@ -96,20 +118,31 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     n_batches = opts.epoch_size // opts.batch_size
     for batch_id in range(n_batches):
         
+        gpu_memory_usage(msg=f"batch_id: {batch_id} - START")
+
         if opts.shpp and opts.shpp_skip != 0:
             opts.force_steps_batch = opts.force_steps * (batch_id%opts.shpp_skip != 1)   # do not force steps for every opts.shpp_skip batches
             # so the initial place holder gets a chance to be trained to find good second step (only apply for shpp mode)
             # choose ==1 so that logged batch val is based on SHPP (while epoch metric is TSP)
 
         t0 = time.perf_counter()
+        
         with torch.device("cpu"): # make sure the dataset is on CPU
-            batch_dataset = baseline.wrap_dataset(problem.make_dataset(
-                size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, 
-                rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution))
-            
-        for batch in tqdm(DataLoader(batch_dataset, batch_size=len(batch_dataset)), disable=opts.no_progress_bar):
-            break # only need the first batch
+            if dataloader is not None:
+                batch, sol = next(dataloader)
+            else:
+                batch_dataset = baseline.wrap_dataset(problem.make_dataset(
+                    size=opts.graph_size, num_samples=opts.batch_size, non_Euc=opts.non_Euc, 
+                    rand_dist=opts.rand_dist, rescale=opts.rescale_dist, distribution=opts.data_distribution,
+                    no_coords=opts.no_coords, keep_rel=opts.keep_rel, force_triangle_iter=opts.force_triangle_iter))
+                    
+                for batch in tqdm(DataLoader(batch_dataset, batch_size=len(batch_dataset)), disable=opts.no_progress_bar):
+                    break # only need the first batch
+                sol = None
+
         model.update_time_count(data_gen=time.perf_counter()-t0)    # record data generation time
+
+        gpu_memory_usage(msg=f"batch_id: {batch_id} - DATA LOADED")
 
     # for batch_id, batch in enumerate(tqdm(training_dataloader, disable=opts.no_progress_bar)):
         if not opts.rescale_dist:
@@ -129,6 +162,7 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
             batch_id,
             step,
             batch,
+            sol,
             tb_logger,
             wandb_logger,
             opts
@@ -174,7 +208,7 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
         fn_clear = 'epoch-{}.pt'.format(epoch - opts.checkpoint_epochs)
         clear_model_states(opts.save_dir, fn_clear)
         
-    avg_reward = validate(model, val_dataset, opts)
+    avg_reward, avg_reward_bs = validate(model, val_dataset, opts)
     opts.best_val = opts.best_val if opts.best_val is not None else avg_reward+1
     if avg_reward < opts.best_val:
         opts.best_val = avg_reward
@@ -185,7 +219,10 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     if not opts.no_tensorboard:
         tb_logger.log_value('val_avg_reward', avg_reward, step)
     if not opts.no_wandb:
-        wandb_logger.log({'val_avg_reward': avg_reward, 'epoch': epoch})
+        info = {'val_avg_reward': avg_reward, 'epoch': epoch}
+        if avg_reward_bs is not None:
+            info['val_avg_reward_bs'] = avg_reward_bs
+        wandb_logger.log(info)
 
     baseline.epoch_callback(model, epoch)
 
@@ -201,25 +238,55 @@ def train_batch(
         batch_id,
         step,
         batch,
+        sol,
         tb_logger,
         wandb_logger,
         opts
 ):
-    x, bl_val = baseline.unwrap_batch(batch)
-    x = move_to(x, opts.device)
-    bl_val = move_to(bl_val, opts.device) if bl_val is not None else None
+    loss_misc = None
 
-    # Evaluate model, get costs and log probabilities
-    cost, log_likelihood = model(x, force_steps=opts.force_steps_batch)
+    # FIXME: unify the code to call model.get_loss() for all learning schemes
+    if opts.learning_scheme == 'RL':
+        x, bl_val = baseline.unwrap_batch(batch)
+        x = move_to(x, opts.device)
+        bl_val = move_to(bl_val, opts.device) if bl_val is not None else None
 
-    t0 = time.perf_counter()
-    # Evaluate baseline, get baseline loss if any (only for critic)
-    bl_val, bl_loss = baseline.eval(x, cost) if bl_val is None else (bl_val, 0)
-    model.update_time_count(baseline_eval=time.perf_counter()-t0)    # record baseline evaluation time
+        gpu_memory_usage(msg=f"batch_id: {batch_id} - DATA MOVED TO DEVICE")
 
-    # Calculate loss
-    reinforce_loss = ((cost - bl_val) * log_likelihood).mean()
-    loss = reinforce_loss + bl_loss
+        # Evaluate model, get costs and log probabilities
+        cost, log_likelihood = model(x, force_steps=opts.force_steps_batch)
+
+        gpu_memory_usage(msg=f"batch_id: {batch_id} - MODEL EVALUATED")
+
+        t0 = time.perf_counter()
+        # Evaluate baseline, get baseline loss if any (only for critic)
+        bl_val, bl_loss = baseline.eval(x, cost) if bl_val is None else (bl_val, torch.tensor(0.0).to(cost.device))
+        model.update_time_count(baseline_eval=time.perf_counter()-t0)    # record baseline evaluation time
+
+        # Calculate loss
+        reinforce_loss = ((cost - bl_val) * log_likelihood).mean()
+        loss = reinforce_loss + bl_loss
+        loss_misc = {"actor_loss": reinforce_loss, "critic_loss": bl_loss}
+
+    elif opts.learning_scheme == 'SL':
+        x, ref_pi = batch, sol
+        x, ref_pi = move_to(x, opts.device), move_to(ref_pi, opts.device)
+        ref_pi = ref_pi.long()  # convert to int64
+        cost, log_likelihood = model(x, ref_pi=ref_pi)
+        loss = -log_likelihood.mean()  # maximize the likelihood of the reference sequence (optimal tours)
+        cost, loss_misc = None, None    # no meaning for SL
+
+    elif opts.learning_scheme == 'USL':
+        x = move_to(batch, opts.device)
+        loss, loss_misc = model.get_loss(x, loss_type="ul", loss_params={"c1": opts.ul_loss_c1})
+        logger.debug(f'{loss_misc["tsp_loss"].item()}, {loss_misc["col_sum_one_loss"].item()}')
+
+        if step % int(opts.log_step) == 0:
+            cost, log_likelihood = model(x)
+
+
+    else:
+        raise ValueError("Unknown learning scheme, please choose from ['RL', 'SL', 'USL']")
 
     t0 = time.perf_counter()
     # Perform backward pass and optimization step
@@ -229,10 +296,11 @@ def train_batch(
     grad_norms = clip_grad_norms(optimizer.param_groups, opts.max_grad_norm)
     optimizer.step()
     model.update_time_count(model_update=time.perf_counter()-t0)    # record model update time
-
+    
+    gpu_memory_usage(msg=f"batch_id: {batch_id} - BACKWARD PASS")
 
     # Logging
     if step % int(opts.log_step) == 0:
         time_stats = model.time_stats
         log_values(cost, grad_norms, epoch, batch_id, step,
-                   log_likelihood, reinforce_loss, bl_loss, time_stats, tb_logger, wandb_logger, opts)
+                   log_likelihood, loss_misc, time_stats, tb_logger, wandb_logger, opts)
