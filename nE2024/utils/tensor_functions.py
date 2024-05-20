@@ -52,11 +52,12 @@ def randomized_svd_batch(A_batch, k, p=5, num_iterations=2):
     return U_batch[:, :, :k], S_batch[:, :k], V_batch[:, :, :k]
 
 
-def knn_adjacency_torch(distances, k):
+def knn_adjacency_torch(distances, k, return_expand=True):
     """
     args:
         distances: torch.Tensor, shape [batch_size, N, N]
         k: int, number of nearest neighbors to consider
+        return_expand: bool, whether to expand the adjacency matrix to the original size
 
     return:
         adj_mat: torch.Tensor, shape [batch_size, N, N]
@@ -64,6 +65,9 @@ def knn_adjacency_torch(distances, k):
 
     # Sort the distances along the last dimension
     _, indices = torch.topk(distances, k=k, dim=-1, largest=False)
+    if not return_expand:
+        return indices
+    
     # Create a mask for the k-nearest neighbors
     mask = torch.zeros_like(distances)
     indices_expanded = indices#.unsqueeze(-1).expand(-1, -1, -1, distances.size(-1))
@@ -72,6 +76,50 @@ def knn_adjacency_torch(distances, k):
     # Convert the mask to Int adjacency matrices
     adj_mat = mask.int()
     return adj_mat
+
+def gather_node_features(edge_feas, adj_idx):
+    """
+    Args:
+        edge_feas (X): torch.Tensor, shape [B, H, V]
+        adj_idx (y): torch.Tensor, shape [B, V, K]
+
+    Returns:
+        z: torch.Tensor, shape [B, H, V, K]
+        z[b, h, i, k] = X[b, h, i, y[b, i, k]]
+    """
+    B, H, V = edge_feas.shape
+    _, _, K = adj_idx.shape
+
+    # print(B, H, V, K)
+    # Expand dimensions of X and y to match the desired output shape
+    X_expanded = edge_feas.unsqueeze(-1).expand(B, H, V, K)
+    # print(y.shape, y.unsqueeze(1).shape)
+    y_expanded = adj_idx.unsqueeze(1).expand(B, H, V, K)
+
+    # Use y to index X and get z
+    z = X_expanded.gather(2, y_expanded)
+
+    return z
+
+
+def recover_full_edge_mat(reduced_edge_mat, adj_idx, fill=-10):
+    """
+    Args:
+        reduced_edge_mat: torch.Tensor, shape [B, V, K]
+        adj_idx: torch.Tensor, shape [B, V, K]
+
+    Returns:
+        X: torch.Tensor, shape [B, V, V]
+        X[b, i, j] = z[b, i, k] if y[b, i, k] == j for some k else -10
+    """
+    B, V, K = reduced_edge_mat.shape
+
+    X = torch.full((B, V, V), fill, dtype=reduced_edge_mat.dtype, device=reduced_edge_mat.device)
+    X.scatter_(2, adj_idx, reduced_edge_mat)
+
+    # full edge mat
+    return X
+
 
 
 def compute_in_batches(f, calc_batch_size, *args, n=None):
