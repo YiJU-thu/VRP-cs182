@@ -232,7 +232,6 @@ class VRPModel(nn.Module):
             log_p, mask, glimpse = self._decoder._get_log_p(fixed, _state, normalize=normalize)
             selected = self._decoder._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])
             _state = _state.update(selected)
-        assert _state.all_finished()
         return _state.get_final_cost()
 
     def update_time_count(self, **kw):
@@ -252,7 +251,7 @@ class VRPModel(nn.Module):
     
     def eas_encoder(self, input, problem_name, eval_opts):
         # raise NotImplementedError("EAS not implemented for encoder")
-        return run_eas_lay_encoder(self._encoder, self._decoder, input, problem_name, eval_opts)
+        return run_eas_lay_encoder(self._encoder, self._decoder, input, self.encoder_name, problem_name, eval_opts)
 
     def eas_decoder(self, input, problem_name, eval_opts):
         # raise NotImplementedError("EAS not implemented for decoder")
