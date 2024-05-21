@@ -168,8 +168,8 @@ class VRPModel(nn.Module):
         else:
             rollout_cost_topk = compute_in_batches(
             lambda b: self._get_rollout_cost_topk(fixed[b.ids], b.state,\
-                                                  log_p_topk[b.ids],\
-                                                  ind_topk[b.ids],\
+                                                  log_p_topk,\
+                                                  ind_topk,\
                                                   k=expand_size, normalize=normalize),
             max_calc_batch_size, beam, n=beam.size()
             )
