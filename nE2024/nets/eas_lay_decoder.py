@@ -160,7 +160,7 @@ def replace_decoder(grouped_actor, state, decoder_params):
 
 
 #######################################################################################################################
-# Search process
+# EAS Training process
 #######################################################################################################################
 
 def run_eas_lay_decoder(encoder, grouped_actor, instance_data, problem_name, eval_opts):

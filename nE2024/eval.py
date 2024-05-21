@@ -100,6 +100,34 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
     model.set_decode_type(
         "greedy" if opts.decode_strategy in ('bs', 'greedy', 'sgbs') else "sampling",
         temp=softmax_temp)
+    if opts.EAS != 0:
+        eas_dataset = dataset
+        EAS_dataloader = DataLoader(eas_dataset, batch_size=opts.max_calc_batch_size)
+        for batch in tqdm(EAS_dataloader, disable=opts.no_progress_bar):
+            
+            if not model.rescale_dist:
+                batch["scale_factors"] = None
+            
+            batch = move_to(batch, device)    
+            
+            ##### To Do: Add specific path of training dataset for EAS ######
+            print('####### Do EAS ######')
+            start = time.time()
+            if opts.EAS == 1:
+                model._encoder = model.eas_encoder(batch, model.problem.NAME, eval_opts = opts)
+            elif opts.EAS == 2:
+                if model.decoder_name == 'nAR':
+                    raise NotImplementedError("EAS Decoder not implemented for NAR")
+                model._decoder._get_log_p = model.eas_decoder(batch, model.problem.NAME, eval_opts = opts)
+            else:
+                raise NotImplementedError("EAS not implemented for EAS = ", opts.EAS)
+            duration = time.time() - start
+
+            #Save the model in .pt file
+            # torch.save(model, 'eas_model.pt')
+
+            print('EAS duration: ', duration)
+            print('####### EAS Done ######')
 
     dataloader = DataLoader(dataset, batch_size=opts.eval_batch_size)
 
@@ -111,19 +139,25 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
         
         batch = move_to(batch, device)
 
-        if opts.EAS != 0:
-            ##### To Do: Add specific path of training dataset for EAS ######
-            print('####### Do EAS ######')
-            start = time.time()
-            if opts.EAS == 1:
-                model._encoder = model.eas_encoder(batch)
-            elif opts.EAS == 2:
-                model._decoder._get_log_p = model.eas_decoder(batch, model.problem.NAME, eval_opts = opts)
-            else:
-                raise NotImplementedError("EAS not implemented for EAS = ", opts.EAS)
-            duration = time.time() - start
-            print('EAS duration: ', duration)
-            print('####### EAS Done ######')
+        # if opts.EAS != 0:
+        #     ##### To Do: Add specific path of training dataset for EAS ######
+        #     print('####### Do EAS ######')
+        #     start = time.time()
+        #     if opts.EAS == 1:
+        #         model._encoder = model.eas_encoder(batch, model.problem.NAME, eval_opts = opts)
+        #     elif opts.EAS == 2:
+        #         if model.decoder_name == 'nAR':
+        #             raise NotImplementedError("EAS Decoder not implemented for NAR")
+        #         model._decoder._get_log_p = model.eas_decoder(batch, model.problem.NAME, eval_opts = opts)
+        #     else:
+        #         raise NotImplementedError("EAS not implemented for EAS = ", opts.EAS)
+        #     duration = time.time() - start
+
+        #     #Save the model in .pt file
+        #     # torch.save(model, 'eas_model.pt')
+
+        #     print('EAS duration: ', duration)
+        #     print('####### EAS Done ######')
 
         start = time.time()
         with torch.no_grad():
@@ -169,20 +203,6 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                     sgbs = True,
                     gamma = opts.gamma,
                 )
-        # FIXME: this is a hack to make things work
-        # TODO: this should be moved to utils.functions
-        # if sequences is None:
-        #     sequences = [None] * batch_size
-        #     costs = [math.inf] * batch_size
-        # else:
-        #     sequences, costs = get_best(
-        #         sequences.cpu().numpy(), costs.cpu().numpy(),
-        #         ids.cpu().numpy() if ids is not None else None,
-        #         batch_size
-        #     )
-        # sequences = sequences.cpu().numpy()
-        # costs = costs.cpu().numpy()
-
 
         duration = time.time() - start
         for seq, cost in zip(sequences, costs):
