@@ -171,15 +171,15 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                 )
         # FIXME: this is a hack to make things work
         # TODO: this should be moved to utils.functions
-        if sequences is None:
-            sequences = [None] * batch_size
-            costs = [math.inf] * batch_size
-        else:
-            sequences, costs = get_best(
-                sequences.cpu().numpy(), costs.cpu().numpy(),
-                ids.cpu().numpy() if ids is not None else None,
-                batch_size
-            )
+        # if sequences is None:
+        #     sequences = [None] * batch_size
+        #     costs = [math.inf] * batch_size
+        # else:
+        #     sequences, costs = get_best(
+        #         sequences.cpu().numpy(), costs.cpu().numpy(),
+        #         ids.cpu().numpy() if ids is not None else None,
+        #         batch_size
+        #     )
         # sequences = sequences.cpu().numpy()
         # costs = costs.cpu().numpy()
 
