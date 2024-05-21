@@ -265,9 +265,13 @@ def force_triangle_ineq(X: torch.Tensor, iter=4, verbose=False) -> torch.Tensor:
     """
 
     I, N, _ = X.shape # I: batch size, N: graph size
-    max_per_batch = 10000000 // N ** 2
+    max_per_batch = 5000 * 100**3 // N ** 3
     if I > max_per_batch:
-        return torch.cat([force_triangle_ineq(X[i:i+max_per_batch], iter=iter, verbose=verbose) for i in range(0, I, max_per_batch)], dim=0)
+        forced = []
+        for i in range(0, I, max_per_batch):
+            forced.append(force_triangle_ineq(X[i:i+max_per_batch], iter=iter, verbose=verbose))
+            logger.debug(f"Processed {i+max_per_batch} instances")
+        return torch.cat(forced, dim=0)
 
     s = 0
     iter = float('inf') if iter is None else iter
