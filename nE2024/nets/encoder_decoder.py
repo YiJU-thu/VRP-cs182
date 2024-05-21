@@ -15,7 +15,7 @@ import time
 from copy import deepcopy
 
 from nets.eas_lay_decoder import run_eas_lay_decoder
-from nets.eas_lay_encoder import run_eas_lay_encoder
+# from nets.eas_lay_encoder import run_eas_lay_encoder
 # from options import get_options, get_eval_options
 
 class VRPModel(nn.Module):
@@ -211,8 +211,8 @@ class VRPModel(nn.Module):
 
     def _get_rollout_cost_topk(self, fixed, state, log_p_topk, ind_topk, k, normalize):
         # Save the original decode_type
-        # original_decode_type = self._decoder.decode_type
-        # self._decoder.decode_type = "greedy"
+        original_decode_type = self._decoder.decode_type
+        self._decoder.decode_type = "greedy"
 
         rollout_cost_topk = torch.zeros_like(log_p_topk)
         for i in range(k):
@@ -220,7 +220,7 @@ class VRPModel(nn.Module):
             rollout_cost_topk[:, :, i] = rollout_cost
 
         # Restore the original decode_type
-        # self._decoder.decode_type = original_decode_type
+        self._decoder.decode_type = original_decode_type
 
         return rollout_cost_topk
     
