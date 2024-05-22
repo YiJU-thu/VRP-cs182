@@ -256,7 +256,7 @@ def replace_encoder(original_encoder, state, encoder_name, embedder_params):
     if encoder_name == 'gat':
         original_encoder.embedder = embedder_added_layers_gat(**embedder_params)
     if encoder_name == 'gcn':
-        original_encoder.embedder.forward = embedder_added_layers_gcn(original_encoder, embedder_params['embedding_dim'])
+        original_encoder.embedder.forward = embedder_added_layers_gcn(original_encoder, embedder_params['embed_dim'])
     original_encoder.embedder.load_state_dict(state_dict=state, strict=False)
     return original_encoder
 
