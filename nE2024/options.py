@@ -283,8 +283,9 @@ def get_eval_options(args=None):
     parser.add_argument('--multiprocessing', action='store_true',
                         help='Use multiprocessing to parallelize over multiple GPUs')
     parser.add_argument('--gamma', type=int, default=2, help='Size for expansion factor in SGBS')
-    parser.add_argument('--EAS', type=int, default=0,
+    parser.add_argument('--eas_layer', type=str, default=None,
                         help='Insert EAS layer or not, 0 for no EAS, 1 for EAS_encoder, 2 for EAS_decoder')
+    parser.add_argument('--max_runtime_per_instance', type=float, default=0.05, help='Maximum runtime per instance in seconds')
 
     opts = parser.parse_args(args)
     opts.f = None

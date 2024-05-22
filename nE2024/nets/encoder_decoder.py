@@ -389,10 +389,10 @@ class VRPModel(nn.Module):
         info["total_time"] = total_time / 3600 # in hours
         return info
     
-    def eas_encoder(self, input, problem_name, eval_opts):
+    def eas_encoder(self, input, problem_name, eval_opts, max_runtime=1000):
         # raise NotImplementedError("EAS not implemented for encoder")
-        return run_eas_lay_encoder(self._encoder, self._decoder, input, self.encoder_name, problem_name, eval_opts)
+        return run_eas_lay_encoder(self._encoder, self._decoder, input, self.encoder_name, problem_name, eval_opts, max_runtime=max_runtime)
 
-    def eas_decoder(self, input, problem_name, eval_opts):
+    def eas_decoder(self, input, problem_name, eval_opts, max_runtime=1000):
         # raise NotImplementedError("EAS not implemented for decoder")
-        return run_eas_lay_decoder(self._encoder, self._decoder, input, problem_name, eval_opts)
+        return run_eas_lay_decoder(self._encoder, self._decoder, input, problem_name, eval_opts, max_runtime=max_runtime)

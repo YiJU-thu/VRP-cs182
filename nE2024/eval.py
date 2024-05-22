@@ -106,21 +106,25 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
     results = []
     for batch in tqdm(dataloader, disable=opts.no_progress_bar):
         
+        max_runtime = opts.max_runtime_per_instance * len(batch["distance"])    # FIXME: ugly way!
+        # print('max_runtime: ', max_runtime)
+
         if not model.rescale_dist:
             batch["scale_factors"] = None
         
         batch = move_to(batch, device)
 
-        if opts.EAS != 0:                
+        if opts.eas_layer is not None:
+            assert opts.eas_layer in ["encoder", "decoder"], "EAS layer should be either encoder or decoder"  
             ##### To Do: Add specific path of training dataset for EAS ######
             print('####### Do EAS ######')
             start = time.time()
-            if opts.EAS == 1:
-                model._encoder = model.eas_encoder(batch, model.problem.NAME, eval_opts = opts)
-            elif opts.EAS == 2:
+            if opts.eas_layer == "encoder":
+                model._encoder = model.eas_encoder(batch, model.problem.NAME, eval_opts = opts, max_runtime = max_runtime)
+            elif opts.eas_layer == "decoder":
                 if model.decoder_name == 'nAR':
                     raise NotImplementedError("EAS Decoder not implemented for NAR")
-                model._decoder._get_log_p = model.eas_decoder(batch, model.problem.NAME, eval_opts = opts)
+                model._decoder._get_log_p = model.eas_decoder(batch, model.problem.NAME, eval_opts = opts, max_runtime = max_runtime)
             else:
                 raise NotImplementedError("EAS not implemented for EAS = ", opts.EAS)
             EAS_duration = time.time() - start

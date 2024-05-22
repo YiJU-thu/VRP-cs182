@@ -14,13 +14,7 @@ from nets.encoder_gat import GraphAttentionEncoder
 from nets.encoder_gcn import ResidualGatedGCNModel
 from utils.tensor_functions import recover_full_edge_mat
 
-# EAS-Lay parameters
-ACTOR_WEIGHT_DECAY = 1e-6
-param_lr = 0.0032 # EAS Learning rate
-p_runs = 1  # Number of parallel runs per instance, set 1 here
-max_iter = 20 # Maximum number of EAS iterations
-param_lambda = 0.05 # Imitation learning loss weight
-max_runtime = 1000 # Maximum runtime in seconds
+
 
 use_cuda = torch.cuda.is_available()
 
@@ -270,7 +264,19 @@ def replace_encoder(original_encoder, state, encoder_name, embedder_params):
 # EAS Training process
 #######################################################################################################################
 
-def run_eas_lay_encoder(encoder, grouped_actor, instance_data, encoder_name, problem_name, eval_opts):
+def run_eas_lay_encoder(encoder, grouped_actor, instance_data, encoder_name, problem_name, eval_opts, max_runtime=1000):
+
+    # EAS-Lay parameters
+    ACTOR_WEIGHT_DECAY = 1e-6
+    param_lr = 0.0032 # EAS Learning rate
+    p_runs = 1  # Number of parallel runs per instance, set 1 here
+    max_iter = 2000 # Maximum number of EAS iterations
+    param_lambda = 0.05 # Imitation learning loss weight
+    # max_runtime = 1000 # Maximum runtime in seconds
+
+
+
+
     # Save the original state_dict of the encoder (e.p. the parameters of the encoder)
     original_embedder_state_dict = encoder.embedder.state_dict()
     if encoder_name == 'gat':
