@@ -12,6 +12,6 @@
 "nE_tsp_100/GAT-GAT-L{3}-pomo32-b800_YJ_20240517T144845": ["nE_tsp_GAT-GAT-L3", ["best"]],
 "nE_tsp_100/GAT-GAT-L{9}-pomo32-b800_YJ_20240517T144808": ["nE_tsp_GAT-GAT-L9", ["best"]],
 "nE_tsp_100/GAT-GAT-shpp-rot-b800_YJ_20240519T004828": ["nE_tsp_GAT-GAT-shpp", ["best"]],
-"nE_cvrp_100/GAT-nAR-rot32-b800_YJ_20240519T002441": ["nE_cvrp_GAT_nAR", [67]],
-"nE_cvrp_100/GAT-GAT-rot32-b800_YJ_20240519T004138": ["nE_cvrp_GAT_GAT", [51]]
+"nE_cvrp_100/GAT-nAR-rot32-b800_YJ_20240519T002441": ["nE_cvrp_GAT_nAR", [67, 126]],
+"nE_cvrp_100/GAT-GAT-rot32-b800_YJ_20240519T004138": ["nE_cvrp_GAT_GAT", [51, 106]]
 }
