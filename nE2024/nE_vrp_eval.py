@@ -23,7 +23,7 @@ import time
 def _tour_zeropad(tours):
     # pad tours to the same length (solution from CVRP)
     max_len = max([len(t) for t in tours])
-    tours_arr = np.array([np.pad(t, (0, max_len - len(t)), mode='constant') for t in tours])
+    tours_arr = np.array([np.pad(t, (0, max_len - len(t)), mode='constant').astype(int) for t in tours])
     return tours_arr
 
 @logger.catch
@@ -54,9 +54,10 @@ def eval_nE_tsp(model, dataset, recompute_cost=True,
 
     # NOTE: in cvrp, each tour may have different length
     costs = np.array(costs)
-    try:
+    min_len, max_len = min([len(t) for t in tours]), max([len(t) for t in tours])
+    if min_len == max_len:
         tours = np.array(tours)
-    except:
+    else:
         tours = _tour_zeropad(tours)
     durations = np.array(durations)
 
