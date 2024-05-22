@@ -3,7 +3,7 @@ from torch import nn
 
 from loguru import logger
 
-from utils.functions import sample_many
+from utils.functions import sample_many, gpu_memory_usage
 from utils.beam_search import beam_search, CachedLookup
 from utils.tensor_functions import compute_in_batches
 
@@ -70,7 +70,8 @@ class VRPModel(nn.Module):
 
         t1 = time.perf_counter()
         res = self._decoder(input, ref_pi=ref_pi, **embed)
-
+        
+        # gpu_memory_usage(msg="Forward", on=True)
 
         # NOTE: old version, no longer needed
         # if self.decoder_name == "gat":
@@ -131,7 +132,9 @@ class VRPModel(nn.Module):
     
     def sample_many(self, input, batch_rep=1, iter_rep=1):
         embed = self._encoder(input)    # embed is a dict, keys specific to the encoder & compatible with the decoder
-        return sample_many(self._decoder, input, embed, batch_rep, iter_rep)
+        res = sample_many(self._decoder, input, embed, batch_rep, iter_rep)
+        gpu_memory_usage(msg="Sample many", on=True)
+        return res
     
 
     def beam_search(self, input, beam_size, compress_mask, max_calc_batch_size, sgbs=False, gamma = 0):
@@ -146,7 +149,9 @@ class VRPModel(nn.Module):
             input, visited_dtype=torch.int64 if compress_mask else torch.uint8
         )
 
-        return beam_search(state, beam_size, propose_expansions)
+        res = beam_search(state, beam_size, propose_expansions)
+        gpu_memory_usage(msg="Beam search", on=True)
+        return res
             
     def precompute_fixed(self, input):
         embed = self._encoder(input)    # embed is a dict, keys specific to the encoder & compatible with the decoder
