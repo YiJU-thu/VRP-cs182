@@ -98,7 +98,7 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
     model.eval()
 
     model.set_decode_type(
-        "greedy" if opts.decode_strategy in ('bs', 'greedy', 'sgbs') else "sampling",
+        "greedy" if opts.decode_strategy in ('bs', 'greedy', 'sgbs', 'mcts') else "sampling",
         temp=softmax_temp)
 
     dataloader = DataLoader(dataset, batch_size=opts.eval_batch_size)
@@ -168,6 +168,11 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                     max_calc_batch_size=opts.max_calc_batch_size,
                     sgbs = True,
                     gamma = opts.gamma,
+                )
+
+            elif opts.decode_strategy == 'mcts':
+                sequences, costs = model.MCTS(
+                    batch
                 )
         # FIXME: this is a hack to make things work
         # TODO: this should be moved to utils.functions

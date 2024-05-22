@@ -234,6 +234,12 @@ class VRPModel(nn.Module):
             _state = _state.update(selected)
         assert _state.all_finished()
         return _state.get_final_cost()
+    
+    def MCTS(self, input):
+        embed = self._encoder(input)
+        num_of_nodes = embed.shape[1]
+        with open(f"./tmp/data/tsp{num_of_nodes}/heatmap.txt", "w+") as f:
+            pass
 
     def update_time_count(self, **kw):
         for key in kw:
