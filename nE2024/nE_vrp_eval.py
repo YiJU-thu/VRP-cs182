@@ -35,7 +35,8 @@ def eval_nE_tsp(model, dataset, recompute_cost=True,
     decode_strategy = decode_strategy
     width = width
     
-    eval_batch_size = max_calc_batch_size // (width if width > 0 else 1)
+    eval_batch_size = max(1, max_calc_batch_size // (width if width > 0 else 1))
+    logger.info(f"batch_size = {eval_batch_size}")
 
     cmd = ["--datasets", 'None',
             "--model", model,
@@ -274,12 +275,14 @@ if __name__ == "__main__":
         run_tag, fail_tag = 'R' + do_tag[1:], 'F' + do_tag[1:]
         return run_tag, fail_tag
     
-    def _get_sol_save_fn(ds, decode_strategy, width, gamma):
+    def _get_sol_save_fn(ds, decode_strategy, width, gamma, tag=None):
         fn = f'{ds}_{decode_strategy}'
         if width > 0:
             fn += f'_w-{width}'
         if gamma > 0:
             fn += f'_g-{gamma}'
+        if tag is not None:
+            fn += f'_{tag}'
         return f'{fn}.pkl'
 
     def _find_first_job(df, do_tags):
@@ -338,7 +341,7 @@ if __name__ == "__main__":
 
         width = int(df.iloc[i].get('width', 0))
         gamma = int(df.iloc[i].get('gamma', 0))
-
+        tag = df.iloc[i].get('tag', None)
 
         config = {
             "decode_strategy": decode_strategy,
@@ -348,7 +351,7 @@ if __name__ == "__main__":
         }
 
 
-        res_fn = _get_sol_save_fn(ds, decode_strategy, width, gamma)
+        res_fn = _get_sol_save_fn(ds, decode_strategy, width, gamma, tag)
         sol_dir = os.path.join(os.path.dirname(model_path), args.sol_dir)
         # FIXME: if exist, continue
 
