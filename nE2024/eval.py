@@ -98,7 +98,7 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
     model.eval()
 
     model.set_decode_type(
-        "greedy" if opts.decode_strategy in ('bs', 'greedy', 'sgbs') else "sampling",
+        "greedy" if opts.decode_strategy in ('bs', 'greedy', 'sgbs', 'shpp') else "sampling",
         temp=softmax_temp)
     if opts.EAS != 0:
         eas_dataset = dataset
@@ -186,7 +186,6 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
 #                 ids = torch.arange(batch_size, dtype=torch.int64, device=costs.device)
 
             elif opts.decode_strategy == 'bs':
-                assert opts.decode_strategy == 'bs'
 
                 sequences, costs = model.beam_search(
                     batch, beam_size=width,
@@ -203,6 +202,13 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
                     sgbs = True,
                     gamma = opts.gamma,
                 )
+
+            elif opts.decode_strategy == 'shpp':
+                raise NotImplementedError("SHPP not implemented now")
+                sequences, costs = model.shpp_refine(
+                    batch, ...,
+                )
+
 
         duration = time.time() - start
         for seq, cost in zip(sequences, costs):

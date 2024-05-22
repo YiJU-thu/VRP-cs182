@@ -18,6 +18,14 @@ from nets.eas_lay_decoder import run_eas_lay_decoder
 # from nets.eas_lay_encoder import run_eas_lay_encoder
 # from options import get_options, get_eval_options
 
+import os, sys
+curr_dir = os.path.dirname(os.path.abspath(__file__))
+utils_proj_dir = os.path.join(curr_dir, "../../utils_project")
+if utils_proj_dir not in sys.path: 
+    sys.path.append(utils_proj_dir)
+from utils_vrp import normalize_graph, get_tour_len_torch
+
+
 class VRPModel(nn.Module):
 
     encoders = {
@@ -152,7 +160,134 @@ class VRPModel(nn.Module):
         res = beam_search(state, beam_size, propose_expansions)
         gpu_memory_usage(msg="Beam search", on=True)
         return res
+    
+
+    def shpp_refine(self, input, init_method="rand_insert"):
+        
+        
+        n_splits = ...
+        time_limit = ...
+
+        t0 = time.perf_counter()
+
+        pi_0, cost_0 = ...  # get initial solution, shape (batch_size, graph_size)
+        logger.debug("Before refinement: {:.3f}+-{:.3f}".format(cost_0.mean(), cost_0.std()))
+        
+        best_cost = cost_0
+        i = 1
+        while time.perf_counter() - t0 < time_limit:
+            pi_1, cost_1 = self._shpp_refine(input, pi_0, ...)
             
+            
+            # make cost_1 be the minimum of cost_0 and cost_1, and update pi_0
+            mask = cost_1 < cost_0
+            pi_0[mask], cost_0[mask] = pi_1[mask], cost_1[mask]
+            cost_diff = cost_0 - best_cost
+            logger.debug("After refinement {}: {:.3f} ({:.2%})".format(i, cost_diff.mean(), mask.mean()))
+
+            i += 1
+            best_cost = cost_0
+
+        return pi_1, cost_1
+    
+
+    def _shpp_refine(self, input, pi_0, n_splits=2, idx_0=0):
+        # to maximize the efficiency, we require every segment be the same length
+
+        def _reorder_input(input, pi_0_expand):
+            input_reordered = {}
+            for k, v in input.items():
+                if v is not None:
+                    if k in ["distance", "rel_distance"]:
+                        input_reordered[k] = v[...] # BUG
+                    else:
+                        input_reordered[k] = v[...] # BUG
+                else:
+                    input_reordered[k] = None
+            return input_reordered
+
+        def _get_sub_input(input, start, end):
+            sub_input = {}
+            for k, v in input.items():
+                if v is not None:
+                    if k in ["distance", "rel_distance"]:
+                        sub_input[k] = input[k][:, start:end, start:end]
+                    else:
+                        sub_input[k] = input[k][:, start:end]
+                else:
+                    sub_input[k] = None
+            return sub_input
+
+        def _merge_splits(input_splits: list):
+            keys = input_splits[0].keys()
+            merged = {}
+            for k in keys:
+                if input_splits[0][k] is not None:
+                    merged[k] = torch.cat([x[k] for x in input_splits], dim=0)   # (batch_size * n_splits, ...)
+                else:
+                    merged[k] = None
+            return merged
+
+        def _merge_sols(split_pis, idx_splits):
+            raise NotImplementedError("Not implemented yet")
+
+
+        if "coords" in input:
+            batch_size, n = input["coords"].shape[:2]
+        elif "distance" in input:
+            batch_size, n = input["distance"].shape[:2]
+
+
+        # equivalent to: shift (to left) idx_0 columns, and append the first column to the end
+        pi_0_expand = torch.cat([pi_0[:,idx_0:], pi_0[:,:idx_0+1]], dim=1)
+        input_expand = _reorder_input(input, pi_0_expand) # reorder the data accordingly
+
+        len_split = np.ceil(n / n_splits).astype(int)   # each split has (approx) len_split nodes
+
+        input_splits = [None] * n_splits
+        idx_splits = [None] * n_splits
+        start = 0
+
+        for i in range(n_splits):   # FIXME: may improve later
+            l = len_split + 1   # max(len_split + 1 + np.random.randint(-3,3), 1) # add some randomness to the length of each split
+            end = min(start + l, n+1)
+            # if i == n_splits - 1:
+            #     end = nodes_tour0_expand.shape[1]
+            
+            # coords = nodes_tour0_expand[:, start:end, :]    # (I, (approx) len_split, 2)
+            sub_input = _get_sub_input(input_expand, start, end)
+            sub_input = normalize_graph(sub_input, rescale=False) # FIXME
+            
+            input_splits[i] = sub_input
+            idx_splits[i] = pi_0_expand[:, start:end]
+            start += l-1
+        
+        merged_mini_batch = _merge_splits(input_splits)  # (batch_size * n_splits, len_split+1, ...)
+        merged_cost, _, merged_pi  = self.forward(merged_mini_batch, force_steps=2, return_pi=True) # FIXME: later, can use ref_pi
+        assert merged_pi.shape == (batch_size * n_splits, len_split+1), f"merged_pi.shape: {merged_pi.shape}"
+        # reshape to (batch_size, n_splits, len_split+1)
+        split_pis = merged_pi.view(batch_size, n_splits, len_split+1).roll(-1, dims=2)  # make the first to be the last
+        refined_pi = _merge_sols(split_pis, idx_splits)  # (batch_size, n)
+        refined_cost = get_tour_len_torch(input, refined_pi)
+
+        return refined_pi, refined_cost
+
+        tour_to_concat = [None] * n_splits
+        for i in range(n_splits):
+            s = shpp_splits[i]
+            tour_to_concat[i] = idx_splits[i][range(s.shape[0]), s.T].T[:,:-1]
+        tours1 = np.concatenate(tour_to_concat, axis=1)
+        assert tours1.shape == tours0.shape, "tours1.shape={}, tours0.shape={}".format(tours1.shape, tours0.shape)
+        obj1 = tour_len_euc_2d(data, tours1)
+
+        res1 = {"obj": obj1, "tours": tours1, "time": res0["time"] + durations}
+        
+        if not mute:
+            print("After refinement: {:.3f}+-{:.3f}".format(obj1.mean(), obj1.std()))
+            pass
+
+
+
     def precompute_fixed(self, input):
         embed = self._encoder(input)    # embed is a dict, keys specific to the encoder & compatible with the decoder
         # NOTE: _precompute method needs to be implemented in each decoder
