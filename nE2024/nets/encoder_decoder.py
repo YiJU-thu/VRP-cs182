@@ -3,7 +3,7 @@ from torch import nn
 
 from loguru import logger
 
-from utils.functions import sample_many
+from utils.functions import sample_many, gpu_memory_usage
 from utils.beam_search import beam_search, CachedLookup
 from utils.tensor_functions import compute_in_batches
 
@@ -15,7 +15,7 @@ import time
 from copy import deepcopy
 
 from nets.eas_lay_decoder import run_eas_lay_decoder
-from nets.eas_lay_encoder import run_eas_lay_encoder
+# from nets.eas_lay_encoder import run_eas_lay_encoder
 # from options import get_options, get_eval_options
 
 class VRPModel(nn.Module):
@@ -70,7 +70,8 @@ class VRPModel(nn.Module):
 
         t1 = time.perf_counter()
         res = self._decoder(input, ref_pi=ref_pi, **embed)
-
+        
+        # gpu_memory_usage(msg="Forward", on=True)
 
         # NOTE: old version, no longer needed
         # if self.decoder_name == "gat":
@@ -131,7 +132,9 @@ class VRPModel(nn.Module):
     
     def sample_many(self, input, batch_rep=1, iter_rep=1):
         embed = self._encoder(input)    # embed is a dict, keys specific to the encoder & compatible with the decoder
-        return sample_many(self._decoder, input, embed, batch_rep, iter_rep)
+        res = sample_many(self._decoder, input, embed, batch_rep, iter_rep)
+        gpu_memory_usage(msg="Sample many", on=True)
+        return res
     
 
     def beam_search(self, input, beam_size, compress_mask, max_calc_batch_size, sgbs=False, gamma = 0):
@@ -146,7 +149,9 @@ class VRPModel(nn.Module):
             input, visited_dtype=torch.int64 if compress_mask else torch.uint8
         )
 
-        return beam_search(state, beam_size, propose_expansions)
+        res = beam_search(state, beam_size, propose_expansions)
+        gpu_memory_usage(msg="Beam search", on=True)
+        return res
             
     def precompute_fixed(self, input):
         embed = self._encoder(input)    # embed is a dict, keys specific to the encoder & compatible with the decoder
@@ -168,8 +173,8 @@ class VRPModel(nn.Module):
         else:
             rollout_cost_topk = compute_in_batches(
             lambda b: self._get_rollout_cost_topk(fixed[b.ids], b.state,\
-                                                  log_p_topk[b.ids],\
-                                                  ind_topk[b.ids],\
+                                                  log_p_topk,\
+                                                  ind_topk,\
                                                   k=expand_size, normalize=normalize),
             max_calc_batch_size, beam, n=beam.size()
             )
@@ -211,8 +216,8 @@ class VRPModel(nn.Module):
 
     def _get_rollout_cost_topk(self, fixed, state, log_p_topk, ind_topk, k, normalize):
         # Save the original decode_type
-        # original_decode_type = self._decoder.decode_type
-        # self._decoder.decode_type = "greedy"
+        original_decode_type = self._decoder.decode_type
+        self._decoder.decode_type = "greedy"
 
         rollout_cost_topk = torch.zeros_like(log_p_topk)
         for i in range(k):
@@ -220,7 +225,7 @@ class VRPModel(nn.Module):
             rollout_cost_topk[:, :, i] = rollout_cost
 
         # Restore the original decode_type
-        # self._decoder.decode_type = original_decode_type
+        self._decoder.decode_type = original_decode_type
 
         return rollout_cost_topk
     
@@ -232,7 +237,6 @@ class VRPModel(nn.Module):
             log_p, mask, glimpse = self._decoder._get_log_p(fixed, _state, normalize=normalize)
             selected = self._decoder._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])
             _state = _state.update(selected)
-        assert _state.all_finished()
         return _state.get_final_cost()
     
     def MCTS(self, input):
@@ -258,7 +262,7 @@ class VRPModel(nn.Module):
     
     def eas_encoder(self, input, problem_name, eval_opts):
         # raise NotImplementedError("EAS not implemented for encoder")
-        return run_eas_lay_encoder(self._encoder, self._decoder, input, problem_name, eval_opts)
+        return run_eas_lay_encoder(self._encoder, self._decoder, input, self.encoder_name, problem_name, eval_opts)
 
     def eas_decoder(self, input, problem_name, eval_opts):
         # raise NotImplementedError("EAS not implemented for decoder")

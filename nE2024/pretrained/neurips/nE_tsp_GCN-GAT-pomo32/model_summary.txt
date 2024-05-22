@@ -1,0 +1,72 @@
+VRPModel(
+  (_encoder): GCNEncoder(
+    (init_embed): InitEncoder(
+      (init_embed): Linear(in_features=2, out_features=96, bias=True)
+      (edge_val_embed): Linear(in_features=1, out_features=96, bias=True)
+    )
+    (embedder): ResidualGatedGCNModel(
+      (layers): ModuleList(
+        (0-5): 6 x ResidualGatedGCNLayer(
+          (node_feat): NodeFeatures(
+            (U): Conv1d(96, 96, kernel_size=(1,), stride=(1,))
+            (V): Conv1d(96, 96, kernel_size=(1,), stride=(1,))
+          )
+          (edge_feat): EdgeFeatures(
+            (U): Conv2d(96, 96, kernel_size=(1, 1), stride=(1, 1))
+            (V): Conv1d(96, 96, kernel_size=(1,), stride=(1,))
+          )
+          (bn_node): BatchNormNode(
+            (batch_norm): BatchNorm1d(96, eps=1e-05, momentum=0.1, affine=True, track_running_stats=False)
+          )
+          (bn_edge): BatchNormEdge(
+            (batch_norm): BatchNorm2d(96, eps=1e-05, momentum=0.1, affine=True, track_running_stats=False)
+          )
+        )
+      )
+    )
+  )
+  (_decoder): AttentionDecoder(
+    (project_node_embeddings): Linear(in_features=96, out_features=288, bias=False)
+    (project_fixed_context): Linear(in_features=96, out_features=96, bias=False)
+    (project_step_context): Linear(in_features=192, out_features=96, bias=False)
+    (project_out): Linear(in_features=96, out_features=96, bias=False)
+    (project_glimpse): Linear(in_features=96, out_features=96, bias=False)
+  )
+  (encoder): GCNEncoder(
+    (init_embed): InitEncoder(
+      (init_embed): Linear(in_features=2, out_features=96, bias=True)
+      (edge_val_embed): Linear(in_features=1, out_features=96, bias=True)
+    )
+    (embedder): ResidualGatedGCNModel(
+      (layers): ModuleList(
+        (0-5): 6 x ResidualGatedGCNLayer(
+          (node_feat): NodeFeatures(
+            (U): Conv1d(96, 96, kernel_size=(1,), stride=(1,))
+            (V): Conv1d(96, 96, kernel_size=(1,), stride=(1,))
+          )
+          (edge_feat): EdgeFeatures(
+            (U): Conv2d(96, 96, kernel_size=(1, 1), stride=(1, 1))
+            (V): Conv1d(96, 96, kernel_size=(1,), stride=(1,))
+          )
+          (bn_node): BatchNormNode(
+            (batch_norm): BatchNorm1d(96, eps=1e-05, momentum=0.1, affine=True, track_running_stats=False)
+          )
+          (bn_edge): BatchNormEdge(
+            (batch_norm): BatchNorm2d(96, eps=1e-05, momentum=0.1, affine=True, track_running_stats=False)
+          )
+        )
+      )
+    )
+  )
+  (decoder): AttentionDecoder(
+    (project_node_embeddings): Linear(in_features=96, out_features=288, bias=False)
+    (project_fixed_context): Linear(in_features=96, out_features=96, bias=False)
+    (project_step_context): Linear(in_features=192, out_features=96, bias=False)
+    (project_out): Linear(in_features=96, out_features=96, bias=False)
+    (project_glimpse): Linear(in_features=96, out_features=96, bias=False)
+  )
+)
+
+PARAMS: [192, 96, 96, 96, 9216, 96, 9216, 96, 9216, 96, 9216, 96, 96, 96, 96, 96, 9216, 96, 9216, 96, 9216, 96, 9216, 96, 96, 96, 96, 96, 9216, 96, 9216, 96, 9216, 96, 9216, 96, 96, 96, 96, 96, 9216, 96, 9216, 96, 9216, 96, 9216, 96, 96, 96, 96, 96, 9216, 96, 9216, 96, 9216, 96, 9216, 96, 96, 96, 96, 96, 9216, 96, 9216, 96, 9216, 96, 9216, 96, 96, 96, 96, 96, 192, 27648, 9216, 18432, 9216, 9216]
+
+TOTAL PARAMS: 300192

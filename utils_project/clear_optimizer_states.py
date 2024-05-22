@@ -84,29 +84,33 @@ def copy_trained_nets(from_dir, to_dir, epoches=None, default_epoch="best"):
             # epoch_fn = f"epoch-{epoch}.pt" if epoch != "best" else "best.pt"
             # epoch = int(epoch) if epoch != "best" else "best"
     
-    if os.path.exists(os.path.join(to_dir, "args.json")) and os.path.exists(os.path.join(to_dir, epoch_fn)):
-        logger.info(f"{to_dir} exists")
-        return
+    
     
     to_dir_parent = os.path.dirname(to_dir)     # the parent directory of to_dir should exist
     assert os.path.isdir(to_dir_parent), f"{to_dir_parent} is not a directory"
     if not os.path.isdir(to_dir):
         os.makedirs(to_dir)
     
-    args_fn = os.path.join(from_dir, "args.json")
-    assert os.path.exists(args_fn), f"{args_fn} does not exist"
-    # copy args.json to to_dir
     if not os.path.exists(os.path.join(to_dir, "args.json")):
-        shutil.copy(args_fn, to_dir)
-    # TODO: copy 
-    summary_fn = os.path.join(from_dir, "model_summary.txt")
-    if os.path.exists(summary_fn) and (not os.path.exists(os.path.join(to_dir, "model_summary.txt"))):
-        shutil.copy(summary_fn, to_dir)
+        args_fn = os.path.join(from_dir, "args.json")
+        assert os.path.exists(args_fn), f"{args_fn} does not exist"
+        # copy args.json to to_dir
+        if not os.path.exists(os.path.join(to_dir, "args.json")):
+            shutil.copy(args_fn, to_dir)
+        # TODO: copy 
+        summary_fn = os.path.join(from_dir, "model_summary.txt")
+        if os.path.exists(summary_fn) and (not os.path.exists(os.path.join(to_dir, "model_summary.txt"))):
+            shutil.copy(summary_fn, to_dir)
 
     for i in range(len(epoches)):
         epoch = epoches[i]
         epoch_fn = epoch_fns[i]
-
+        
+        if os.path.exists(os.path.join(to_dir, epoch_fn)):
+            logger.info(f"{to_dir}, {epoch_fn} exists")
+            continue
+        
+        
         epoch_path = os.path.join(from_dir, epoch_fn)
         epoch_to_path = os.path.join(to_dir, epoch_fn)
         if not os.path.exists(epoch_to_path):
