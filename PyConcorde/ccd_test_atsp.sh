@@ -2,12 +2,13 @@ data_dir="../dataset/nE2024_data/test"
 
 
 # larger dataset
-sizes=(200 500 1000)
+# sizes=(200 500 1000)
+sizes=(200)
 # Iterate over each size
 for size in "${sizes[@]}"
 do
-    python concorde_solve.py --dask_parallel --type ATSP --data_dir $data_dir --out_dir $data_dir --data rnd_N${size}_I100_S_seed0_iter4_NoTrack.pkl \
-        --redo_failed --out_prefix CCD --clear 5 --save 5 --scale 1000 --big_M 50 --log CCD_rnd_${size}.log --n_worker 10
+    python concorde_solve.py --type ATSP --data_dir $data_dir --out_dir $data_dir --data rnd_N${size}_I100_S_seed0_iter4_NoTrack.pkl \
+        --redo_failed --out_prefix CCD --clear 1 --save 1 --scale 1000 --big_M 50 --log CCD_rnd_${size}.log --I 100 --time_bound 1800
 done
 
 
