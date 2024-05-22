@@ -15,7 +15,7 @@ import time
 from copy import deepcopy
 
 from nets.eas_lay_decoder import run_eas_lay_decoder
-# from nets.eas_lay_encoder import run_eas_lay_encoder
+from nets.eas_lay_encoder import run_eas_lay_encoder
 # from options import get_options, get_eval_options
 
 class VRPModel(nn.Module):
