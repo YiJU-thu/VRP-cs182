@@ -28,7 +28,7 @@ def _tour_zeropad(tours):
 
 @logger.catch
 def eval_nE_tsp(model, dataset, recompute_cost=True,
-                decode_strategy='greedy', width=0, gamma=0, max_calc_batch_size=10000):
+                decode_strategy='greedy', width=0, gamma=0, max_calc_batch_size=10000, EAS = 0):
 
     # suggest always use recompute, since tsp.make_dataset has normalized the dataset
 
@@ -44,7 +44,8 @@ def eval_nE_tsp(model, dataset, recompute_cost=True,
             "--width", str(width),
             "--eval_batch_size", str(eval_batch_size),
             "--max_calc_batch_size", str(max_calc_batch_size),
-            "--gamma", str(gamma)]
+            "--gamma", str(gamma),
+            "--EAS", str(EAS)]
 
     opts = get_eval_options(cmd)
     t0 = time.perf_counter()
@@ -230,6 +231,7 @@ if __name__ == "__main__":
     parser.add_argument('--decode_strategy', type=str, default="greedy")
     parser.add_argument('--width', type=int, default=0)
     parser.add_argument('--gamma', type=int, default=0)
+    parser.add_argument('--EAS', type=int, default=0)
 
     args = parser.parse_args()
 
@@ -245,7 +247,8 @@ if __name__ == "__main__":
     if args.log_fn is None:
         assert args.model is not None and args.ds is not None
         config = {"decode_strategy": args.decode_strategy, "width": args.width,
-                  "gamma": args.gamma, "max_calc_batch_size": args.max_calc_batch_size}
+                  "gamma": args.gamma, "max_calc_batch_size": args.max_calc_batch_size,
+                  "EAS": args.EAS}
         model_path = os.path.join(model_dir, args.model)
         res = run_eval(model = model_path, ds = args.ds, data_dir = data_dir, I=args.I, 
                        config = config)
