@@ -14,9 +14,10 @@ from loguru import logger
 import pynvml
 
 
-def gpu_memory_usage(msg=""):
+def gpu_memory_usage(msg="", on=False):
     """Get the current GPU memory usage."""
-    return
+    if not on:    
+        return
     if not torch.cuda.is_available():
         return  # No GPU
     device_count = torch.cuda.device_count()
