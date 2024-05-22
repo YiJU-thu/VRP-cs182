@@ -294,4 +294,10 @@ def get_eval_options(args=None):
 
     opts.widths = opts.width if opts.width is not None else [0]
 
+    # if is "none", "None", "NONE", set to None
+    for k, v in vars(opts).items():
+        if v in ["none", "None", "NONE"]:
+            setattr(opts, k, None)
+
+
     return opts

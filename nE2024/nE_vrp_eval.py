@@ -204,7 +204,7 @@ def run_eval(model, ds, data_dir, I=None, config=None):
     config = {} if config is None else config
     if "max_calc_batch_size" not in config:
         config["max_calc_batch_size"] = 10000 if n <= 100 else 1000
-    config["max_calc_batch_size"] = config["max_calc_batch_size"] * n / 100
+    config["max_runtime_per_instance"] = config["max_runtime_per_instance"] * n / 100
     
     costs, tours, durations, wall_time = eval_nE_tsp(model, dataset, recompute_cost=True, **config)
     res = {
