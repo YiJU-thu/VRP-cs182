@@ -130,12 +130,16 @@ class embedder_added_layers_gat(GraphAttentionEncoder):
             # Flatten the last two dimensions
             h_flattened = h.view(h.size(0), h.size(1), -1)
             # Parameters for the new residual layer
-            self.new_weight_1 = nn.Parameter(torch.Tensor(embedding_dim, embedding_dim),requires_grad=True)
-            self.new_bias_1 = nn.Parameter(torch.Tensor(embedding_dim),requires_grad=True)
-            self.new_weight_2 = nn.Parameter(torch.zeros(embedding_dim, embedding_dim),requires_grad=True)
-            self.new_bias_2 = nn.Parameter(torch.zeros(embedding_dim),requires_grad=True)
+            
+            self.new_weight_1 = nn.Parameter(torch.Tensor(embedding_dim, embedding_dim).to(h.device), requires_grad=True)
+            self.new_bias_1 = nn.Parameter(torch.Tensor(embedding_dim).to(h.device), requires_grad=True)
+            self.new_weight_2 = nn.Parameter(torch.zeros(embedding_dim, embedding_dim).to(h.device), requires_grad=True)
+            self.new_bias_2 = nn.Parameter(torch.zeros(embedding_dim).to(h.device), requires_grad=True)
             torch.nn.init.xavier_uniform_(self.new_weight_1)
             torch.nn.init.constant_(self.new_bias_1, 0)
+
+            # print the device of h_flattened, self.new_weight_1, self.new_bias_1
+            print("***", h_flattened.device, self.new_weight_1.device, self.new_bias_1.device)
 
             embeddings_eas = torch.matmul(h_flattened, self.new_weight_1) + self.new_bias_1
             # Pass the embeddings through a ReLU activation
