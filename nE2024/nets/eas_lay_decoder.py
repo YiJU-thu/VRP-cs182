@@ -11,13 +11,6 @@ import inspect
 from utils.functions import do_batch_rep
 
 
-# EAS-Lay parameters
-ACTOR_WEIGHT_DECAY = 1e-6
-param_lr = 0.0032 # EAS Learning rate
-p_runs = 1  # Number of parallel runs per instance, set 1 here
-max_iter = 20 # Maximum number of EAS iterations
-param_lambda = 0.05 # Imitation learning loss weight
-max_runtime = 1000 # Maximum runtime in seconds
 
 use_cuda = torch.cuda.is_available()
 
@@ -163,7 +156,17 @@ def replace_decoder(grouped_actor, state, decoder_params):
 # EAS Training process
 #######################################################################################################################
 
-def run_eas_lay_decoder(encoder, grouped_actor, instance_data, problem_name, eval_opts):
+def run_eas_lay_decoder(encoder, grouped_actor, instance_data, problem_name, eval_opts, max_runtime=1000):
+
+    # EAS-Lay parameters
+    ACTOR_WEIGHT_DECAY = 1e-6
+    param_lr = 0.0032 # EAS Learning rate
+    p_runs = 1  # Number of parallel runs per instance, set 1 here
+    max_iter = 2000 # Maximum number of EAS iterations
+    param_lambda = 0.05 # Imitation learning loss weight
+    # max_runtime = 1000 # Maximum runtime in seconds
+
+
     # Save the original state_dict of the decoder (e.p. the parameters of the decoder)
     original_decoder_state_dict = grouped_actor.state_dict()
     decoder_params = get_decoder_parameters(grouped_actor)

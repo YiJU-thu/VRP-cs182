@@ -28,24 +28,29 @@ def _tour_zeropad(tours):
 
 @logger.catch
 def eval_nE_tsp(model, dataset, recompute_cost=True,
-                decode_strategy='greedy', width=0, gamma=0, max_calc_batch_size=10000, EAS = 0):
+                decode_strategy='greedy', width=0, gamma=0, max_calc_batch_size=10000, 
+                eas_layer=None, eas_batch_size=None, max_runtime_per_instance=0.05):
 
     # suggest always use recompute, since tsp.make_dataset has normalized the dataset
 
     decode_strategy = decode_strategy
     width = width
     
-    eval_batch_size = max(1, max_calc_batch_size // (width if width > 0 else 1))
+    if eas_layer is not None:
+        eval_batch_size = eas_batch_size
+    else:
+        eval_batch_size = max(1, max_calc_batch_size // (width if width > 0 else 1))
     logger.info(f"batch_size = {eval_batch_size}")
 
     cmd = ["--datasets", 'None',
             "--model", model,
             "--decode_strategy", decode_strategy,
             "--width", str(width),
-            "--eval_batch_size", str(eval_batch_size),
-            "--max_calc_batch_size", str(max_calc_batch_size),
+            "--eval_batch_size", str(int(eval_batch_size)),
+            "--max_calc_batch_size", str(int(max_calc_batch_size)),
             "--gamma", str(gamma),
-            "--EAS", str(EAS)]
+            "--eas_layer",  eas_layer,
+            '--max_runtime_per_instance', str(max_runtime_per_instance)]
 
     opts = get_eval_options(cmd)
     t0 = time.perf_counter()
@@ -189,15 +194,17 @@ def run_eval(model, ds, data_dir, I=None, config=None):
     else:
         n = 100
 
-
-    if ds == 'amz_nS' or ds == 'amz_S':
-        dataset = load_dataset(dataset_path, dataset_type='amz', to_np=True, skip_station=(ds=='amz_nS'), I=I)
-    else:
-        dataset = load_dataset(dataset_path, dataset_type='rnd', rnd_dist='complex' if ds=='rnd_C' else 'standard', I=I)
+    # load dataset on cpu
+    with torch.device('cpu'):
+        if ds == 'amz_nS' or ds == 'amz_S':
+            dataset = load_dataset(dataset_path, dataset_type='amz', to_np=True, skip_station=(ds=='amz_nS'), I=I)
+        else:
+            dataset = load_dataset(dataset_path, dataset_type='rnd', rnd_dist='complex' if ds=='rnd_C' else 'standard', I=I)
     
     config = {} if config is None else config
     if "max_calc_batch_size" not in config:
         config["max_calc_batch_size"] = 10000 if n <= 100 else 1000
+    config["max_calc_batch_size"] = config["max_calc_batch_size"] * n / 100
     
     costs, tours, durations, wall_time = eval_nE_tsp(model, dataset, recompute_cost=True, **config)
     res = {
@@ -231,7 +238,9 @@ if __name__ == "__main__":
     parser.add_argument('--decode_strategy', type=str, default="greedy")
     parser.add_argument('--width', type=int, default=0)
     parser.add_argument('--gamma', type=int, default=0)
-    parser.add_argument('--EAS', type=int, default=0)
+    parser.add_argument('--eas_layer', type=str, default=None)
+    parser.add_argument('--max_runtime_per_instance', type=float, default=0.05)
+    parser.add_argument('--eas_batch_size', type=int, default=1000)
 
     args = parser.parse_args()
 
@@ -248,7 +257,8 @@ if __name__ == "__main__":
         assert args.model is not None and args.ds is not None
         config = {"decode_strategy": args.decode_strategy, "width": args.width,
                   "gamma": args.gamma, "max_calc_batch_size": args.max_calc_batch_size,
-                  "EAS": args.EAS}
+                  "eas_layer": args.eas_layer, "eas_batch_size": args.eas_batch_size,
+                  "max_runtime_per_instance": args.max_runtime_per_instance}
         model_path = os.path.join(model_dir, args.model)
         res = run_eval(model = model_path, ds = args.ds, data_dir = data_dir, I=args.I, 
                        config = config)
@@ -279,14 +289,16 @@ if __name__ == "__main__":
         run_tag, fail_tag = 'R' + do_tag[1:], 'F' + do_tag[1:]
         return run_tag, fail_tag
     
-    def _get_sol_save_fn(ds, decode_strategy, width, gamma, tag=None):
+    def _get_sol_save_fn(ds, decode_strategy, width, gamma, eas_layer, eas_batch_size, tag=None):
         fn = f'{ds}_{decode_strategy}'
         if width > 0:
             fn += f'_w-{width}'
         if gamma > 0:
             fn += f'_g-{gamma}'
+        if eas_layer is not None:
+            fn += f'_eas-{eas_layer[0].upper()}-{eas_batch_size}'
         if tag is not None:
-            fn += f'_{tag}'
+                    fn += f'_{tag}'
         return f'{fn}.pkl'
 
     def _find_first_job(df, do_tags):
@@ -306,7 +318,7 @@ if __name__ == "__main__":
     run_tag, fail_tag = _get_tags(do_tag)
     
     decode_strategy = args.decode_strategy
-    assert decode_strategy in ['greedy', 'sample', 'bs', 'sgbs']
+    assert decode_strategy in ['greedy', 'sample', 'bs', 'sgbs', 'eas']
 
 
     if args.redo_failed:
@@ -345,17 +357,33 @@ if __name__ == "__main__":
 
         width = int(df.iloc[i].get('width', 0))
         gamma = int(df.iloc[i].get('gamma', 0))
+        eas_layer = df.iloc[i].get('layer', None)
+        eas_batch_size = df.iloc[i].get('batch_size', 1000)
+
         tag = df.iloc[i].get('tag', None)
+        if tag in ["T1", "T2"]:
+            max_runtime_per_instance = 0.05 if tag == "T1" else 0.5
+        else:
+            max_runtime_per_instance = args.max_runtime_per_instance
+
+
+        if decode_strategy == 'eas':
+            _decode_strategy = df.iloc[i].get('strategy', 'greedy')
+        else:
+            _decode_strategy = decode_strategy
 
         config = {
-            "decode_strategy": decode_strategy,
+            "decode_strategy": _decode_strategy,
             "width": width,
             "gamma": gamma,
-            "max_calc_batch_size": args.max_calc_batch_size
+            "max_calc_batch_size": args.max_calc_batch_size,
+            "eas_layer": eas_layer,
+            "eas_batch_size": eas_batch_size,
+            "max_runtime_per_instance": max_runtime_per_instance,
         }
 
 
-        res_fn = _get_sol_save_fn(ds, decode_strategy, width, gamma, tag)
+        res_fn = _get_sol_save_fn(ds, decode_strategy, width, gamma, eas_layer, eas_batch_size, tag)
         sol_dir = os.path.join(os.path.dirname(model_path), args.sol_dir)
         # FIXME: if exist, continue
 
